@@ -1,0 +1,42 @@
+# Suivi en direct de la regle listing v1 : un passage par heure. Voir listing_live.py.
+#   sans secret                       : journal fictif seul
+#   secrets HL_ACCOUNT + HL_AGENT_KEY : pilote en SIMULATION (ordres construits et controles, rien d'envoye)
+#   + variable HL_LIVE = 1            : les ordres partent. Arret d'urgence : creer le fichier live/STOP (plus d'entree, les sorties continuent).
+# L'etat (live/) est versionne par la tache ; chaque evenement (annonce, entree, sortie, source en panne, ecart de positions) ouvre une issue.
+name: listing-live
+on:
+  schedule:
+    - cron: "7 * * * *"        # GitHub peut retarder ou sauter un passage : listing_live.py relit 12 h de fils et tolere 2 h de retard a l'entree
+  workflow_dispatch:
+permissions:
+  contents: write
+  issues: write
+concurrency: listing-live
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      HL_ACCOUNT: ${{ secrets.HL_ACCOUNT }}
+      HL_AGENT_KEY: ${{ secrets.HL_AGENT_KEY }}
+      HL_LIVE: ${{ vars.HL_LIVE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests ccxt
+      - run: python listing_live.py --test && python listing_broker.py && python listing_live.py
+      - name: versionner l'etat
+        if: always()               # meme si le passage echoue a mi-chemin : un ordre envoye doit rester dans le journal
+        run: |
+          git config user.name "listing-live"
+          git config user.email "listing-live@users.noreply.github.com"
+          git add live/
+          git diff --cached --quiet || (git commit -m "live: $(date -u +%FT%H:%MZ)" && git push)
+      - name: alerte
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -s live/alerts.txt ]; then gh issue create --title "listing-live $(date -u '+%F %H:%M')" --body-file live/alerts.txt; fi
