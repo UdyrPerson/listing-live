@@ -11,6 +11,7 @@ import math
 import os
 import pathlib
 import re
+import time
 
 import requests
 
@@ -26,7 +27,7 @@ def credentials():
     acct, key = os.environ.get("HL_ACCOUNT"), os.environ.get("HL_AGENT_KEY")
     if not (acct and key) and KEY_FILE.exists():
         vals = {m.group(1).strip().lower(): m.group(2) for m in (re.match(r"\s*([A-Za-z _\-]+?)\s*[:=]\s*(\S+)", ln) for ln in KEY_FILE.read_text(encoding="utf-8").splitlines()) if m}
-        key = next((v for k, v in vals.items() if "key" in k and len(v.removeprefix("0x")) == 64), None)
+        key = next((v for k, v in vals.items() if "key" in k and "aster" not in k and len(v.removeprefix("0x")) == 64), None)      # le meme fichier porte aussi la cle Aster
         acct = next((v for k, v in vals.items() if "rabby" in k or "account" in k or "master" in k), None)
     return (acct, key) if acct and key else (None, None)
 
@@ -51,6 +52,13 @@ class Broker:
         self.x = ccxt.hyperliquid({"walletAddress": account, "privateKey": key})
         self.x.load_markets()
         self.sym = {m["info"]["name"]: s for s, m in self.x.markets.items() if m.get("swap") and ":" not in str(m["info"].get("name"))}     # hors marches HIP-3
+        self.days_left = None                                   # jours avant l'expiration de la cle d'agent : sans cle valide, plus d'entree NI de sortie
+        try:
+            agent = self.x.eth_get_address_from_private_key(key).lower()
+            mine = [a for a in requests.post(INFO, json={"type": "extraAgents", "user": account}, timeout=30).json() if a["address"].lower() == agent]
+            self.days_left = (mine[0]["validUntil"] / 1000 - time.time()) / 86400 if mine else None
+        except Exception:
+            pass
 
     def state(self):
         """-> (valeur du compte en $, {coin: taille signee}). En mode "unified account" la marge est le USDC du cote spot."""

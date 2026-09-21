@@ -25,15 +25,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install requests ccxt
-      - run: python listing_live.py --test && python listing_broker.py && python listing_live.py
+      - run: pip install requests==2.34.2 ccxt==4.5.78     # versions figees : ce code signe des ordres reels, une mise a jour ne doit pas changer son comportement a notre insu
+      - run: python listing_feed.py --test && python listing_live.py --test && python listing_broker.py && python listing_live.py
       - name: versionner l'etat
         if: always()               # meme si le passage echoue a mi-chemin : un ordre envoye doit rester dans le journal
         run: |
           git config user.name "listing-live"
           git config user.email "listing-live@users.noreply.github.com"
           git add live/
-          git diff --cached --quiet || (git commit -m "live: $(date -u +%FT%H:%MZ)" && git push)
+          git diff --cached --quiet || git commit -m "live: $(date -u +%FT%H:%MZ)"
+          # un deploiement de code pendant le passage ferait refuser le push, et l'etat (positions comprises) serait perdu : on se recale d'abord
+          git pull --rebase origin main && git push
       - name: alerte
         if: always()
         env:
