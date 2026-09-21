@@ -34,7 +34,7 @@ BINANCE = "https://www.binance.com/bapi/composite/v1/public/cms/article/list/que
 NOT_A_COIN = {"KRW", "BTC", "USDT", "USD", "USDC", "ETH", "EUR", "BNB", "FDUSD", "TRY", "BRL", "JPY", "ETF", "NFT", "IPO", "CEO", "SEC", "DEX", "CEX", "API", "APP", "UTC",
               "KST", "APR", "APY", "US", "EU", "UK", "U", "V2", "V3", "L2", "DAO", "TVL", "USDE", "BUSD", "TUSD", "DAI", "BSC", "ERC", "SPL", "BEP", "ERC20", "BEP20"}
 TICKER = r"[A-Z0-9]{1,12}"
-WIRE_HEAD = re.compile(r"^(?:据官方公告，|据官方消息，|韩国|第二大|最大|加密货币|加密|交易所|交易平台|\s)*(Bithumb|Coinbase|Robinhood)\s*(?:Crypto|Markets|Assets)?\s*(?:宣布|称|：|:)?\s*"
+WIRE_HEAD = re.compile(r"^(?:据官方公告，|据官方消息，|韩国|第二大|最大|加密货币|加密|交易所|交易平台|\s)*(Upbit|Bithumb|Coinbase|Robinhood)\s*(?:Crypto|Markets|Assets)?\s*(?:宣布|称|：|:)?\s*"
                        r"(将于今日|将于[^上，]{0,14}|将在[^上，]{0,14}|即将|计划|将|新增|现已|已|正式)?\s*(?:上线|上架)", re.I)
 WIRE_BAD = re.compile(r"永续|合约|期货|期权|杠杆|下架|下线|终止|路线图|国际|International|衍生|钱包|Wallet|质押|借贷|贷款|股票|ETF|预测|Chain|链上|功能|活动|空投|储备|指数|理财|Earn|应用|版本|影响|转账|充提|充值|提现", re.I)
 WIRE_MARKET = {"bithumb": "spot_krw", "coinbase": "spot", "robinhood": "spot"}       # Bithumb ne liste presque que contre le won : meme convention que l'echantillon
@@ -65,8 +65,14 @@ def parse_wire(text):
         return None
     if venue == "bithumb" and modal in ("现已", "已", "正式"):
         return None                                             # Robinhood liste sans preavis : toutes les formes sont l'annonce
+    if venue == "upbit":                                        # secours de l'API officielle (elle refuse les serveurs de la tache horaire)
+        if modal in ("现已", "已", "正式"):
+            return None
+        market = "spot_krw" if re.search("韩元|KRW|원화", text) else "spot"      # mention explicite du won : rappel 96 %, precision 98 % contre l'API (sans l'exiger : 99 % / 80 %)
+    else:
+        market = WIRE_MARKET[venue]
     tk = tickers(title[m.end():])
-    return (venue, WIRE_MARKET[venue], tk) if tk else None
+    return (venue, market, tk) if tk else None
 
 
 def parse_upbit(title):
@@ -106,7 +112,8 @@ def get(url, params):
         r = requests.get(url, params=params, headers=UA, timeout=30)
         if r.status_code == 200 and r.text[:1] == "{":
             return r.json()
-        time.sleep(15 * (k + 1))                                # 429 : on attend, on ne force pas
+        if k < TRIES - 1:
+            time.sleep(15 * (k + 1))                            # 429 : on attend, on ne force pas
     raise SystemExit(f"source indisponible : {url}")
 
 
@@ -193,6 +200,10 @@ def _selftest():
     assert w("🔔重要快讯 Coinbase国际将上线ADA、LINK、DOGE和XLM永续期货合约") is None
     assert w("受「上线Upbit」消息影响，ID短时上涨近40% - 链接") is None                          # reaction de prix, pas une annonce
     assert w("受Coinbase上线消息影响，KARRAT短时拉升49% - 链接") is None
+    assert w("🔔重要快讯 Upbit将上线SPACE ID（ID）韩元交易对") == ("upbit", "spot_krw", ["ID"])
+    assert w("【Upbit 将上线 ALT 和 PYTH 交易对】\nForesight News 消息，韩国加密交易平台 Upbit 将上线 AltLayer（ALT）和 Pyth Network（PYTH）交易对") == ("upbit", "spot", ["ALT", "PYTH"])    # won non mentionne : ecarte
+    assert w("【加密交易所 Upbit 将上线 STG，支持比特币交易对】") == ("upbit", "spot", ["STG"])             # marche BTC seul : hors regle
+    assert w("【Upbit 将上线 NEXO USDT 交易对】") == ("upbit", "spot", ["NEXO"])
     assert w("【Robinhood 上线 Solana 生态代币 ORCA、RAY】") == ("robinhood", "spot", ["ORCA", "RAY"])
     assert w("【Robinhood 上线 W】") == ("robinhood", "spot", ["W"])
     assert w("【Robinhood 新增上线 Injective（INJ）】") == ("robinhood", "spot", ["INJ"])
