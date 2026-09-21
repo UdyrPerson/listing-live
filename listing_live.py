@@ -31,7 +31,8 @@ INFO = "https://api.hyperliquid.xyz/info"
 ASTER = "https://fapi.asterdex.com"
 VENUES = {("upbit", "spot_krw"), ("bithumb", "spot_krw"), ("coinbase", "spot"), ("binance", "spot"), ("robinhood", "spot")}
 DELAY_S, HOLD_S, STOP = 36 * 3600, 120 * 3600, 0.5
-LATE_S = 2 * 3600                  # entree relevee plus de 2 h apres l'heure prevue : "entree manquee", pas de faux prix
+LATE_S = 6 * 3600                  # tolerance de retard a l'entree. La tache GitHub ne delivre que ~1 passage sur 4 (trous jusqu'a 4,6 h) ; le backtest montre
+                                   # un plateau du delai d'entree (+36 h a +60 h : +259 a +328 pb couvert), donc entrer tard vaut bien mieux que manquer le trade.
 LOOKBACK_S = 12 * 3600             # profondeur de relecture des fils a chaque passage (la tache GitHub peut sauter des heures)
 HEDGE_N = 5
 BEST_EFFORT = {"upbit", "bithumb"}  # sources redondantes (les fils couvrent Upbit a 96 % et Bithumb a 97 %) : une panne ne merite pas d'alerte
@@ -362,7 +363,7 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None):
         if j["status"] != "signal" or now < int(j["entry_ts"]):
             continue
         if now > int(j["entry_ts"]) + LATE_S:
-            j |= {"status": "entree manquee", "note": "passage en retard de plus de 2 h"}
+            j |= {"status": "entree manquee", "note": f"passage en retard de plus de {LATE_S // 3600} h"}
             alerts.append(f"ENTREE MANQUEE {j['coin']}")
             continue
         s = book_snapshot(j["exch"], j["coin"])
@@ -371,7 +372,8 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None):
         px = s["sell"][0] or s["bid"]
         slip = [None if p is None else (s["mid"] - p) / s["mid"] * 1e4 for p in s["sell"]]
         vol = float(ctx[j["coin"]].get("dayNtlVlm") or 0) / 1e6 if j["exch"] == "hl" else ""
-        j |= {"status": "ouvert", "t_in": now, "bid": s["bid"], "ask": s["ask"], "spread_bp": round(s["spread_bp"], 2), "px_in": px,
+        # exit_ts est recalcule ici : la tenue de 5 jours part de l'entree REELLE, comme dans le backtest, meme si le passage horaire est en retard
+        j |= {"status": "ouvert", "t_in": now, "exit_ts": now + HOLD_S, "bid": s["bid"], "ask": s["ask"], "spread_bp": round(s["spread_bp"], 2), "px_in": px,
               "slip_1k_bp": "" if slip[0] is None else round(slip[0], 2), "slip_5k_bp": "" if slip[1] is None else round(slip[1], 2),
               "funding_in": ctx[j["coin"]].get("funding", "") if j["exch"] == "hl" else "", "day_vol_musd": "" if vol == "" else round(vol, 2),
               "legs": json.dumps(legs), "legs_px_in": json.dumps([float(ctx[c]["midPx"] or ctx[c]["markPx"]) for c in legs])}
@@ -470,6 +472,8 @@ def main():
 def _selftest():
     global book_snapshot, candles, funding_sum
     assert schedule(1000000000) == (1000000000 + DELAY_S + 200 + 300, 1000000000 + DELAY_S + 500 + HOLD_S)         # 1e9 + 36 h n'est pas sur une bougie : arrondi au-dessus
+    j0 = {c: "" for c in J_COLS} | {"id": "x", "ticker": "Z", "exch": "hl", "coin": "Z", "status": "signal", "entry_ts": 1000, "exit_ts": 1000 + HOLD_S, "t_ann": 0}
+    assert j0["exit_ts"] - j0["entry_ts"] == HOLD_S
     assert schedule(1000000000)[0] % 300 == 0 and schedule(999999900) == (999999900 + DELAY_S + 300, 999999900 + DELAY_S + 300 + HOLD_S)   # deja sur une bougie : pas d'arrondi
     uni = {"SUI": {}, "kPEPE": {}, "BTC": {}}
     assert hl_coin("SUI", uni) == "SUI" and hl_coin("PEPE", uni) == "kPEPE" and hl_coin("ZAMA", uni) is None
@@ -486,7 +490,7 @@ def _selftest():
     journal, alerts = [], []                                                                      # machine a etats, sans reseau
     step(t, journal, [{"ts": t - 3600, "venue": "upbit", "ticker": "ZAMA"}], alerts, uni, {"XYZ": "XYZUSDT"})
     assert journal[0]["status"] == "ineligible" and "Aster" in journal[0]["note"]
-    step(t, journal, [{"ts": t - 40 * 3600, "venue": "upbit", "ticker": "SUI"}], alerts, uni)     # vue 40 h apres : trop tard pour une entree a +36 h
+    step(t, journal, [{"ts": t - 45 * 3600, "venue": "upbit", "ticker": "SUI"}], alerts, uni)     # vue 45 h apres : au-dela de +36 h + LATE_S
     assert journal[1]["note"] == "annonce vue trop tard" and len(alerts) == 2
 
     class Fake:                                                                                   # courtier sans reseau : tient ses positions, enregistre les ordres

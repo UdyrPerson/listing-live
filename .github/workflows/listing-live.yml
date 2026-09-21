@@ -5,8 +5,11 @@
 # L'etat (live/) est versionne par la tache ; chaque evenement (annonce, entree, sortie, source en panne, ecart de positions) ouvre une issue.
 name: listing-live
 on:
-  schedule:
-    - cron: "7 * * * *"        # GitHub peut retarder ou sauter un passage : listing_live.py relit 12 h de fils et tolere 2 h de retard a l'entree
+  schedule:                    # mesure du 2026-09-22 : GitHub n'a delivre que 2 passages sur 11 attendus, avec des trous jusqu'a 4,6 h.
+    - cron: "7 * * * *"        # -> on demande 4 passages par heure plutot qu'un, et listing_live.py tolere 6 h de retard a l'entree
+    - cron: "22 * * * *"       #    (le backtest montre un plateau du delai d'entree de +36 h a +60 h : entrer tard coute moins cher que manquer le trade).
+    - cron: "37 * * * *"       #    `concurrency` garantit qu'un seul passage tourne a la fois ; un passage sans rien a faire coute ~70 s.
+    - cron: "52 * * * *"
   workflow_dispatch:
 permissions:
   contents: write
