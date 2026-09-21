@@ -32,6 +32,7 @@ DELAY_S, HOLD_S, STOP = 36 * 3600, 120 * 3600, 0.5
 LATE_S = 2 * 3600                  # entree relevee plus de 2 h apres l'heure prevue : "entree manquee", pas de faux prix
 LOOKBACK_S = 12 * 3600             # profondeur de relecture des fils a chaque passage (la tache GitHub peut sauter des heures)
 HEDGE_N = 5
+BEST_EFFORT = {"upbit"}              # l'API Upbit refuse les serveurs GitHub : les fils couvrent Upbit (rappel 96 %, precision 98 %), pas d'alerte
 ALERT_AFTER = (6, 24, 72)             # nombre de passages rates de suite qui declenchent une alerte sur une source
 SIZES = (1000, 5000)               # notionnels ($) pour lesquels on releve le prix executable
 TAKER = 0.00045
@@ -124,7 +125,7 @@ def collect(now, alerts):
         except (Exception, SystemExit) as e:
             health[name] = health.get(name, 0) + 1
             print(f"source en panne : {name} ({type(e).__name__}), {health[name]} passage(s) de suite")
-            if health[name] in ALERT_AFTER:                    # une source muette = des listings manques : alerte, mais pas a chaque passage
+            if health[name] in ALERT_AFTER and name not in BEST_EFFORT:                    # une source muette = des listings manques : alerte, mais pas a chaque passage
                 alerts.append(f"SOURCE EN PANNE depuis {health[name]} passages : {name}")
 
     def upbit():
