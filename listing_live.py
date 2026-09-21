@@ -34,7 +34,7 @@ DELAY_S, HOLD_S, STOP = 36 * 3600, 120 * 3600, 0.5
 LATE_S = 2 * 3600                  # entree relevee plus de 2 h apres l'heure prevue : "entree manquee", pas de faux prix
 LOOKBACK_S = 12 * 3600             # profondeur de relecture des fils a chaque passage (la tache GitHub peut sauter des heures)
 HEDGE_N = 5
-BEST_EFFORT = {"upbit"}            # l'API Upbit refuse les serveurs GitHub : les fils couvrent Upbit (rappel 96 %, precision 98 %), pas d'alerte
+BEST_EFFORT = {"upbit", "bithumb"}  # sources redondantes (les fils couvrent Upbit a 96 % et Bithumb a 97 %) : une panne ne merite pas d'alerte
 ALERT_AFTER = (6, 24, 72)          # nombre de passages rates de suite qui declenchent une alerte sur une source
 SIZES = (1000, 5000)               # notionnels ($) pour lesquels on releve le prix executable
 TAKER = {"hl": 0.00045, "aster": 0.00035}
@@ -209,6 +209,14 @@ def collect(now, alerts):
                 out += [(a["releaseDate"] // 1000, "binance", "spot", t, len(tk), a["title"][:200], "binance_cms") for t in tk]
         return out
 
+    def bithumb():
+        out = []
+        for n in lf.bithumb_page()[0]:
+            tk = lf.parse_bithumb(n["title"])
+            if tk:
+                out += [(lf.kst_epoch(n["published_at"]), "bithumb", "spot_krw", t, len(tk), n["title"][:200], "bithumb_api") for t in tk]
+        return out
+
     def wire(channel):
         def fn():
             out, before = [], None
@@ -226,6 +234,7 @@ def collect(now, alerts):
 
     source("upbit", upbit)
     source("binance", binance)
+    source("bithumb", bithumb)          # API officielle : 5 derniers avis seulement, donc redondante avec les fils, pas un remplacement
     for c in lf.WIRES:
         source(c, wire(c))
     LIVE.mkdir(exist_ok=True)

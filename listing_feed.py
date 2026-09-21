@@ -6,9 +6,10 @@
 Une source par lieu, la plus proche de l'original :
   upbit      API d'avis officielle, horodatage de premiere publication
   binance    API CMS officielle, rubrique "New Cryptocurrency Listing"
-  bithumb, coinbase, robinhood
-             titres des depeches de quatre fils chinois (corpus de news.py) : la page d'avis Bithumb est bloquee (HTTP 403), Coinbase et
-             Robinhood annoncent sur X. L'heure est celle de la premiere depeche : quelques minutes de retard, sans effet sur une entree a +36 h.
+  bithumb    API d'avis officielle en direct (5 derniers avis seulement) EN PLUS des fils : source de premiere main, plus rapide, redondante
+  coinbase, robinhood
+             titres des depeches de quatre fils chinois (corpus de news.py) : Coinbase et Robinhood annoncent sur X.
+             L'heure est celle de la premiere depeche : quelques minutes de retard, sans effet sur une entree a +36 h.
 Une annonce = (lieu, ticker). Les redites du meme couple dans les DEDUP_DAYS jours (rappel du jour J, ouverture des echanges) sont ignorees.
 Les API officielles sont mises en cache et relues par pages jusqu'au premier avis deja connu (Upbit repond 429 au-dela de quelques pages par minute).
 """
@@ -31,6 +32,7 @@ UA = {"User-Agent": "Mozilla/5.0"}
 TRIES = 8                                                       # listing_live.py le baisse : une source en panne ne doit pas bloquer un passage horaire
 UPBIT = "https://api-manager.upbit.com/api/v1/announcements"
 BINANCE = "https://www.binance.com/bapi/composite/v1/public/cms/article/list/query"
+BITHUMB = "https://api.bithumb.com/v1/notices"        # n'expose que les 5 derniers avis : suivi en direct seulement, aucun historique
 NOT_A_COIN = {"KRW", "BTC", "USDT", "USD", "USDC", "ETH", "EUR", "BNB", "FDUSD", "TRY", "BRL", "JPY", "ETF", "NFT", "IPO", "CEO", "SEC", "DEX", "CEX", "API", "APP", "UTC",
               "KST", "APR", "APY", "US", "EU", "UK", "U", "V2", "V3", "L2", "DAO", "TVL", "USDE", "BUSD", "TUSD", "DAI", "BSC", "ERC", "SPL", "BEP", "ERC20", "BEP20"}
 TICKER = r"[A-Z0-9]{1,12}"
@@ -82,6 +84,25 @@ def parse_upbit(title):
         return None
     tk = tickers(head)
     return ("spot_krw" if "KRW" in head or "원화" in head else "spot", tk) if tk else None
+
+
+def parse_bithumb(title):
+    """Avis Bithumb -> [tickers] si c'est un ajout au marche en won, sinon None. Format officiel : "[마켓 추가] 트라발라(AVA) 원화 마켓 추가"."""
+    if "원화" not in title or "마켓" not in title or not re.search(r"추가|개시", title) or re.search(r"종료|중지|유의|이벤트|에어드랍", title):
+        return None
+    return tickers(re.sub(r"^\s*\[[^\]]*\]\s*", "", title)) or None
+
+
+def bithumb_page(page=1):
+    """-> ([avis], False) ; meme forme que les autres sources, mais sans pagination possible."""
+    r = requests.get(BITHUMB, params={"count": 100}, headers=UA, timeout=30)
+    r.raise_for_status()
+    return r.json(), False
+
+
+def kst_epoch(s):
+    """Horodatage Bithumb "2026-09-21 17:13:17", en heure de Seoul (UTC+9), sans fuseau indique -> epoch UTC."""
+    return int(dt.datetime.fromisoformat(s).replace(tzinfo=dt.timezone(dt.timedelta(hours=9))).timestamp())
 
 
 def parse_binance(title):
@@ -219,6 +240,14 @@ def _selftest():
     assert u("빅타임(BIGTIME), 아카시네트워크(AKT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (AKT 거래지원 개시 시점 연기 안내)") == ("spot_krw", ["BIGTIME", "AKT"])
     assert u("KRW 마켓 디지털 자산 추가 (ASTR) (거래지원 개시 시점 연기 안내)") == ("spot_krw", ["ASTR"])
     assert u("플레이댑(PDA) 거래지원 종료 안내 (3/25 14:00)") is None and u("멀티버스엑스(EGLD) 거래 유의 종목 지정 안내") is None
+    bt = parse_bithumb
+    assert bt("[마켓 추가] 트라발라(AVA) 원화 마켓 추가") == ["AVA"]
+    assert bt("[마켓 추가] 인터폴드(FOLD), 이유알코인(EURC) 원화 마켓 추가") == ["FOLD", "EURC"]
+    assert bt("[마켓 추가] 블록스트리트(BSB) 원화 마켓 추가") == ["BSB"]
+    assert bt("페치(FET), 멀티버스엑스(EGLD), 어크로스프로토콜(ACX) 거래유의종목 지정") is None        # surveillance, pas un listing
+    assert bt("소닉(S) 입출금 일시 중지 안내 (09/21 오후 8시~)") is None and bt("9월 3주차 가스(GAS) 에어드랍 지급 안내") is None
+    assert bt("[이벤트] 총 3억원 상당, 젠신(AI) 원화마켓 추가 기념 이벤트") is None                     # evenement marketing autour d'un listing
+    assert kst_epoch("2026-09-21 09:00:00") == kst_epoch("2026-09-21 00:00:00") + 9 * 3600 and dt.datetime.fromtimestamp(kst_epoch("2026-01-01 09:00:00"), dt.timezone.utc).hour == 0
     b = parse_binance
     assert b("Binance Will List Jito (JTO) with Seed Tag Applied") == ["JTO"]
     assert b("Binance Futures Will Launch USDⓈ-Margined PLUMEUSDT Perpetual Contract") is None
