@@ -10,6 +10,7 @@ cher), sinon Aster, en FICTIF SEULEMENT (research/execution-venues.md). Etat dan
   journal.csv        un signal par ligne : signal -> ouvert -> clos | stoppe, ou ineligible / entree manquee
   alerts.txt         ce qui s'est passe pendant CE passage (la tache en fait une issue)
   health.json        nombre de passages rates de suite, par source
+  markets.json       tickers en won cotes sur Upbit et Bithumb au dernier passage (detecteur de listing de secours)
   equity.csv         valeur du compte a chaque passage (seulement avec une cle)
   STOP               s'il existe, plus aucune entree reelle (les sorties continuent) : arret d'urgence, a creer a la main dans le depot
 Regle : research/listing-strategy-v1.md. Short a +36 h, 5 jours, stop +50 %, couverture = panier equipondere des HEDGE_N perps Hyperliquid les plus
@@ -41,6 +42,7 @@ SIZES = (1000, 5000)               # notionnels ($) pour lesquels on releve le p
 TAKER = {"hl": 0.00045, "aster": 0.00035}
 SHORT_USD, REAL_LEGS, MAX_REAL = 22, 2, 4      # pilote reel : short ~22 $, couverture 2 x ~11 $ (ordre minimum Hyperliquid : 10 $), 4 positions au plus
 SPRT_DRIFT, SPRT_BOUND = 0.02, 1.95            # test sequentiel de Wald sur le resultat couvert par trade (research/listing-strategy-v1.md)
+MAX_NEW_MARKETS = 8                # plus de 8 marches neufs d'un coup = etat perdu, pas 8 listings : on reamorce sans emettre
 KEY_WARN_DAYS = 14
 A_COLS = ["ts", "venue", "market", "ticker", "n_tickers", "head", "source"]
 R_COLS = ["real", "r_size", "r_px_in", "r_stop", "r_legs", "r_px_out", "r_legs_out", "r_net_usd", "r_note"]
@@ -218,6 +220,23 @@ def collect(now, alerts):
                 out += [(lf.kst_epoch(n["published_at"]), "bithumb", "spot_krw", t, len(tk), n["title"][:200], "bithumb_api") for t in tk]
         return out
 
+    def markets(venue):
+        """Nouveau marche en won apparu depuis le dernier passage = listing. Detection a l'OUVERTURE des echanges, donc un peu apres l'annonce :
+        acceptable (le backtest montre un plateau du delai d'entree), et c'est la seule voie quand l'API d'avis est bloquee."""
+        def fn():
+            path = LIVE / "markets.json"
+            known = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            seed = venue not in known                                # premier passage pour ce lieu : on amorce l'etat sans rien emettre
+            cur = sorted(lf.krw_markets(venue))
+            fresh = sorted(set(cur) - set(known.get(venue, [])))
+            known[venue] = cur
+            LIVE.mkdir(exist_ok=True)
+            path.write_text(json.dumps(known), encoding="utf-8")
+            if seed or len(fresh) > MAX_NEW_MARKETS:                 # trop de nouveaux d'un coup = etat perdu, pas une vague de listings
+                return []
+            return [(now, venue, "spot_krw", t, 1, f"nouveau marche {t}/KRW detecte sur {venue}", venue + "_markets") for t in fresh]
+        return fn
+
     def wire(channel):
         def fn():
             out, before = [], None
@@ -235,6 +254,8 @@ def collect(now, alerts):
 
     source("upbit", upbit)
     source("binance", binance)
+    for v in ("upbit", "bithumb"):
+        source(f"marches {v}", markets(v))   # detection par apparition d'un marche en won : seule voie pour Upbit depuis GitHub (avis = 403)
     source("bithumb", bithumb)          # API officielle : 5 derniers avis seulement, donc redondante avec les fils, pas un remplacement
     for c in lf.WIRES:
         source(c, wire(c))

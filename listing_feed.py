@@ -32,6 +32,7 @@ UA = {"User-Agent": "Mozilla/5.0"}
 TRIES = 8                                                       # listing_live.py le baisse : une source en panne ne doit pas bloquer un passage horaire
 UPBIT = "https://api-manager.upbit.com/api/v1/announcements"
 BINANCE = "https://www.binance.com/bapi/composite/v1/public/cms/article/list/query"
+MARKETS = {"upbit": "https://api.upbit.com/v1/market/all", "bithumb": "https://api.bithumb.com/v1/market/all"}   # listes de marches : PUBLIQUES et non bloquees
 BITHUMB = "https://api.bithumb.com/v1/notices"        # n'expose que les 5 derniers avis : suivi en direct seulement, aucun historique
 NOT_A_COIN = {"KRW", "BTC", "USDT", "USD", "USDC", "ETH", "EUR", "BNB", "FDUSD", "TRY", "BRL", "JPY", "ETF", "NFT", "IPO", "CEO", "SEC", "DEX", "CEX", "API", "APP", "UTC",
               "KST", "APR", "APY", "US", "EU", "UK", "U", "V2", "V3", "L2", "DAO", "TVL", "USDE", "BUSD", "TUSD", "DAI", "BSC", "ERC", "SPL", "BEP", "ERC20", "BEP20"}
@@ -98,6 +99,17 @@ def bithumb_page(page=1):
     r = requests.get(BITHUMB, params={"count": 100}, headers=UA, timeout=30)
     r.raise_for_status()
     return r.json(), False
+
+
+def krw_markets(venue):
+    """Tickers cotes contre le won sur `venue`, vus par son API de marches publique. Sert de DETECTEUR de secours :
+    l'API d'avis d'Upbit renvoie 403 depuis les serveurs GitHub (verifie le 2026-09-22), celle-ci repond."""
+    r = requests.get(MARKETS[venue], headers=UA, timeout=30)
+    r.raise_for_status()
+    out = {m["market"].split("-", 1)[1] for m in r.json() if str(m.get("market", "")).startswith("KRW-")}
+    if len(out) < 50:
+        raise RuntimeError(f"liste de marches {venue} suspecte ({len(out)} lignes)")      # reponse tronquee : ne jamais l'interpreter comme des retraits
+    return out
 
 
 def kst_epoch(s):
