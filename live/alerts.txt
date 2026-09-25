@@ -1,2 +1,0 @@
-ENTREE FICTIVE short hl:HYPE a 91.91265717549881 (spread 0.1 pb, glissement 1 k$ 0.09 pb, 5 k$ 0.67 pb)
-ENTREE REEL short 0.24 HYPE a 91.907 ; stop 556792284092 ; couverture [('ETH', 0.0041), ('SOL', 0.09)]
