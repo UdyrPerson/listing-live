@@ -1,0 +1,2 @@
+# Empreintes de pre-enregistrement (SHA-256 tronque a 16 caracteres), publiees avant toute lecture des donnees testees
+2026-09-26  T-B  474c57a9191badba
