@@ -18,7 +18,6 @@ import requests
 KEY_FILE = pathlib.Path("docs/superpowers/API-HL-Key/private")
 INFO = "https://api.hyperliquid.xyz/info"
 SLIPPAGE = "0.01"                  # un ordre "au marche" est une limite IOC a 1 % du prix de reference : au-dela, pas d'execution plutot qu'un mauvais prix
-LEVERAGE = 3                       # levier du compte (marge croisee), jamais de marge isolee sur un short (framework, section 4)
 MIN_USD = 10.5                     # Hyperliquid refuse un ordre de moins de 10 $
 
 
@@ -61,13 +60,13 @@ class Broker:
             pass
 
     def state(self):
-        """-> (valeur du compte en $, {coin: taille signee}). En mode "unified account" la marge est le USDC du cote spot."""
+        """-> (valeur du compte en $, {coin: taille signee}, marge initiale bloquee en $). En mode "unified account" la marge est le USDC du cote spot."""
         ch = requests.post(INFO, json={"type": "clearinghouseState", "user": self.account}, timeout=30).json()
         spot = requests.post(INFO, json={"type": "spotClearinghouseState", "user": self.account}, timeout=30).json().get("balances", [])
         usdc = sum(float(b["total"]) for b in spot if b["coin"] == "USDC")
         upnl = sum(float(p["position"]["unrealizedPnl"]) for p in ch["assetPositions"])
         value = max(float(ch["marginSummary"]["accountValue"]), usdc + upnl)
-        return value, {p["position"]["coin"]: float(p["position"]["szi"]) for p in ch["assetPositions"] if float(p["position"]["szi"]) != 0}
+        return value, {p["position"]["coin"]: float(p["position"]["szi"]) for p in ch["assetPositions"] if float(p["position"]["szi"]) != 0}, float(ch["marginSummary"]["totalMarginUsed"])
 
     def size_for(self, coin, usd, px):
         return round_size(usd, px, self.x.markets[self.sym[coin]]["precision"]["amount"])
@@ -100,9 +99,10 @@ class Broker:
             for o in self.x.fetch_open_orders(self.sym[coin]):
                 self.x.cancel_order(o["id"], self.sym[coin])
 
-    def leverage(self, coin):
+    def leverage(self, coin, lev):
+        """Levier en marge croisee, plafonne par l'exchange. En croisee il ne fixe que la marge initiale bloquee ; la liquidation depend de la marge de maintenance."""
         if self.live:
-            lev = min(LEVERAGE, int(self.x.markets[self.sym[coin]]["info"].get("maxLeverage") or LEVERAGE))
+            lev = min(lev, int(self.x.markets[self.sym[coin]]["info"].get("maxLeverage") or lev))
             self.x.set_leverage(lev, self.sym[coin], {"marginMode": "cross"})
 
 

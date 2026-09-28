@@ -14,12 +14,14 @@ cher), sinon Aster, en FICTIF SEULEMENT (research/execution-venues.md). Etat dan
   equity.csv         valeur du compte a chaque passage (seulement avec une cle)
   STOP               s'il existe, plus aucune entree reelle (les sorties continuent) : arret d'urgence, a creer a la main dans le depot
 Regle : research/listing-strategy-v1.md. Short a +36 h, 5 jours, stop +50 %, couverture = panier equipondere des HEDGE_N perps Hyperliquid les plus
-traites (hors BTC, hors le coin, hors coins shortes par ailleurs), beta 1. Pilote reel : short ~SHORT_USD, REAL_LEGS lignes de couverture.
+traites (hors BTC, hors le coin, hors coins shortes par ailleurs), beta 1. Pilote reel : short de F x capital x min(1, VOL_REF / vol 3 j), couverture au meme notionnel.
 """
 import csv
 import json
+import math
 import pathlib
 import re
+import statistics
 import sys
 import time
 
@@ -41,7 +43,9 @@ BEST_EFFORT = {"upbit", "bithumb"}  # sources redondantes (les fils couvrent Upb
 ALERT_AFTER = (6, 24, 72)          # nombre de passages rates de suite qui declenchent une alerte sur une source
 SIZES = (1000, 5000)               # notionnels ($) pour lesquels on releve le prix executable
 TAKER = {"hl": 0.00045, "aster": 0.00035}
-SHORT_USD, REAL_LEGS, MAX_REAL = 22, 2, 4      # pilote reel : short ~22 $, couverture 2 x ~11 $ (ordre minimum Hyperliquid : 10 $), 4 positions au plus
+F, VOL_REF, MAX_REAL = 0.5, 0.08, 4            # pilote reel : short de 50 % du capital, reduit si la vol journaliere des 3 j avant l'annonce depasse 8 % (backtest)
+LEV_SHORT, LEV_HEDGE = 3, 10                   # marge croisee seulement, jamais isolee sur un short (framework, section 4) ; plafonnes par l'exchange
+MAX_MARGIN, MIN_LEG = 0.7, 11                  # marge initiale du compte <= 70 % de sa valeur : pas de liquidation avant les stops ; ordre minimum Hyperliquid 10 $
 SPRT_DRIFT, SPRT_BOUND = 0.02, 1.95            # test sequentiel de Wald sur le resultat couvert par trade (research/listing-strategy-v1.md)
 MAX_NEW_MARKETS = 8                # plus de 8 marches neufs d'un coup = etat perdu, pas 8 listings : on reamorce sans emettre
 KEY_WARN_DAYS = 14
@@ -289,7 +293,7 @@ def write(name, cols, rows):
 # ---------------------------------------------------------------- ordres du pilote (Hyperliquid seulement)
 
 def real_enter(j, snap, ctx, broker, journal, alerts):
-    """Short, stop de protection sur l'exchange, puis les lignes de couverture. Une erreur n'interrompt jamais le journal fictif."""
+    """Short dimensionne sur le capital, stop de protection sur l'exchange, puis la couverture au meme notionnel. Une erreur n'interrompt jamais le journal fictif."""
     mode, coin = "reel" if broker.live else "simulation", j["coin"]
     if (LIVE / "STOP").exists():
         j["r_note"] = "arret d'urgence : pas d'entree"
@@ -302,8 +306,18 @@ def real_enter(j, snap, ctx, broker, journal, alerts):
         alerts.append(f"ENTREE {mode.upper()} ECARTEE {coin} : perp deja en portefeuille")
         return
     try:
-        broker.leverage(coin)
-        size, px = broker.market(coin, "sell", broker.size_for(coin, SHORT_USD, snap["bid"]), snap["bid"])
+        value, _, used = broker.state()
+        t = int(j["t_ann"])
+        rets = [math.log(float(c["c"]) / float(c["o"])) for c in candles("hl", coin, t - 3 * 86400, t) if t - 3 * 86400 <= c["t"] // 1000 < t]
+        vol = (statistics.stdev(rets) if len(rets) > 1 else 0.0) * 288 ** 0.5 or VOL_REF        # vol journaliere sur les 3 j avant l'annonce, comme le backtest
+        usd = min(F * value * min(1.0, VOL_REF / vol), (MAX_MARGIN * value - used) / (1 / LEV_SHORT + 1 / LEV_HEDGE))
+        j["r_note"] = f"taille {usd:.0f} $ = {F:.0%} x {value:.0f} $ x min(1, {VOL_REF:.0%} / vol {vol:.1%}), marge deja bloquee {used:.0f} $"
+        if usd < MIN_LEG:
+            j["r_note"] += " : marge insuffisante, pas d'entree"
+            alerts.append(f"ENTREE {mode.upper()} ECARTEE {coin} : {j['r_note']}")
+            return
+        broker.leverage(coin, LEV_SHORT)
+        size, px = broker.market(coin, "sell", broker.size_for(coin, usd, snap["bid"]), snap["bid"])
     except Exception as e:
         j["r_note"] = f"entree en echec : {e}"
         alerts.append(f"ENTREE {mode.upper()} EN ECHEC {coin} : {e}")
@@ -313,22 +327,27 @@ def real_enter(j, snap, ctx, broker, journal, alerts):
         j["r_stop"] = broker.stop(coin, size, px * (1 + STOP))
     except Exception as e:
         alerts.append(f"URGENT : STOP NON POSE sur {coin} ({e}) -> nouvelle tentative au prochain passage")
-    legs, target = [], size * px / REAL_LEGS
-    for c in json.loads(j["legs"]):                                 # deja hors BTC, hors le coin, hors coins shortes par ailleurs
-        if len(legs) == REAL_LEGS:
+    cands = json.loads(j["legs"])                                   # deja hors BTC, hors le coin, hors coins shortes par ailleurs
+    k = max(1, min(len(cands), int(size * px // MIN_LEG)))          # autant de lignes que le minimum d'ordre le permet, HEDGE_N au plus
+    legs, left = [], size * px
+    for i, c in enumerate(cands):
+        if len(legs) == k:
             break
         ref = float(ctx[c]["midPx"] or ctx[c]["markPx"])
+        target = left / min(k - len(legs), len(cands) - i)          # une ligne sautee reporte son notionnel sur les suivantes
         try:
             want = broker.size_for(c, target, ref)
-            if abs(want * ref / target - 1) > 0.15:                 # pas de cotation trop gros pour ~11 $ (ZEC : 0,01 = 15 $) : ligne suivante
+            if abs(want * ref / target - 1) > 0.15:                 # pas de cotation trop gros pour la cible (ZEC : 0,01 = 15 $) : ligne suivante
                 continue
-            broker.leverage(c)
+            broker.leverage(c, LEV_HEDGE)
             lsize, lpx = broker.market(c, "buy", want, ref)
             legs.append([c, lsize, lpx])
+            left -= lsize * lpx
         except Exception as e:
             alerts.append(f"COUVERTURE INCOMPLETE {c} : {e}")
     j["r_legs"] = json.dumps(legs)
-    alerts.append(f"ENTREE {mode.upper()} short {size} {coin} a {px} ; stop {j['r_stop'] or 'ABSENT'} ; couverture {[(c, z) for c, z, _ in legs]}")
+    alerts.append(f"ENTREE {mode.upper()} short {size} {coin} a {px} ({size * px:.0f} $) ; stop {j['r_stop'] or 'ABSENT'} ; "
+                  f"couverture {size * px - left:.0f} $ {[(c, z) for c, z, _ in legs]} ; {j['r_note']}")
 
 
 def real_exit(j, ctx, broker, positions, alerts):
@@ -523,9 +542,10 @@ def _selftest():
     class Fake:                                                                                   # courtier sans reseau : tient ses positions, enregistre les ordres
         def __init__(self, live):
             self.live, self.sent, self.pos, self.fail = live, [], {}, set()
-        def state(self): return 150.0, dict(self.pos)
+        used, lev = 0.0, {}
+        def state(self): return 150.0, dict(self.pos), self.used
         def size_for(self, coin, usd, px): return round(usd / px, 4)
-        def leverage(self, coin): pass
+        def leverage(self, coin, lev): self.lev[coin] = lev
         def market(self, coin, side, size, ref, reduce=False):
             if (coin, side) in self.fail:
                 raise RuntimeError("refus simule")
@@ -547,14 +567,16 @@ def _selftest():
     sig = {c: "" for c in J_COLS} | {"id": "x", "ticker": "SUI", "exch": "hl", "coin": "SUI", "status": "signal", "entry_ts": t, "exit_ts": t + HOLD_S, "t_ann": t - DELAY_S}
     jr, al = [sig], []
     step(t + 60, jr, [], al, ctx2, {}, b)
-    assert sig["status"] == "ouvert" and sig["r_size"] == 22.0 and sig["r_net_usd"] == "" and b.pos["SUI"] == -22.0, (sig["status"], al)     # REGRESSION : ouverte a ce passage, pas refermee aussitot
-    assert [c for c, _, _ in json.loads(sig["r_legs"])] == ["ETH", "SOL"] and "SUI" not in json.loads(sig["legs"]) and expected(jr) == b.pos and not [x for x in al if "ECART" in x]
+    assert sig["status"] == "ouvert" and sig["r_size"] == 75.0 and sig["r_net_usd"] == "" and b.pos["SUI"] == -75.0, (sig["status"], al)     # REGRESSION : ouverte a ce passage, pas refermee aussitot
+    legs = json.loads(sig["r_legs"])                                                              # 50 % de 150 $ (une seule bougie : vol inconnue, pas de reduction), 4 lignes de ~18,75 $
+    assert [c for c, _, _ in legs] == ["ETH", "SOL", "HYPE", "XRP"] and abs(sum(z * p for _, z, p in legs) - 75) < 0.5 and "SUI" not in json.loads(sig["legs"])
+    assert b.lev == {"SUI": 3, "ETH": 10, "SOL": 10, "HYPE": 10, "XRP": 10} and expected(jr) == b.pos and not [x for x in al if "ECART" in x]
     step(t + 3660, jr, [], al, ctx2, {}, b)
     assert sig["status"] == "ouvert"                                                              # passage suivant : la position est sur le compte, rien ne bouge
-    b.fail = {("SOL", "sell")}                                                                    # sortie : la 2e ligne refuse de se vendre
+    b.fail = {("XRP", "sell")}                                                                    # sortie : la derniere ligne refuse de se vendre
     step(t + HOLD_S + 60, jr, [], al, ctx2, {}, b)
     n_buy = sum(x[:2] == ("SUI", "buy") for x in b.sent)
-    assert sig["status"] == "clos" and sig["r_px_out"] != "" and sig["r_net_usd"] == "" and n_buy == 1 and b.pos == {"SOL": json.loads(sig["r_legs"])[1][1]}
+    assert sig["status"] == "clos" and sig["r_px_out"] != "" and sig["r_net_usd"] == "" and n_buy == 1 and b.pos == {"XRP": json.loads(sig["r_legs"])[3][1]}
     b.fail = set()
     step(t + HOLD_S + 3660, jr, [], al, ctx2, {}, b)                                              # nouvel essai : ne rachete PAS le short une 2e fois, ne revend PAS ETH
     assert sig["r_net_usd"] != "" and sum(x[:2] == ("SUI", "buy") for x in b.sent) == 1 and sum(x[:2] == ("ETH", "sell") for x in b.sent) == 1 and b.pos == {} and expected(jr) == {}
@@ -579,6 +601,20 @@ def _selftest():
     eth = {c: "" for c in J_COLS} | {"id": "e", "ticker": "ETH", "exch": "hl", "coin": "ETH", "status": "ouvert", "legs": "[]", "r_note": ""}
     real_enter(eth, {"bid": 2000.0}, ctx2, Fake(live=False), [dict(sig) | {"r_net_usd": "", "r_px_out": "", "r_legs": json.dumps([["ETH", 0.0055, 2000]]), "r_legs_out": ""}, eth], [])
     assert eth["r_size"] == "" and "deja en portefeuille" in eth["r_note"]                        # ETH sert de couverture ailleurs : pas de short reel dessus
+    x = 0.16 / 288 ** 0.5                                                                         # vol journaliere 16 % : taille divisee par 2
+    candles = lambda exch, coin, a, b: [{"t": (a + 300 * i) * 1000, "o": "1", "c": str(math.exp(x if i % 2 else -x))} for i in range(864)]
+    def enter(used):
+        f = Fake(live=True)
+        f.used = used
+        jj = dict(sig) | {c: "" for c in R_COLS} | {"legs": json.dumps(["ETH", "SOL", "HYPE", "XRP"])}
+        real_enter(jj, {"bid": 1.0}, ctx2, f, [jj], [])
+        return jj
+    assert abs(enter(0.0)["r_size"] - 37.5) < 0.1
+    assert abs(enter(95.0)["r_size"] - 10 / (1 / LEV_SHORT + 1 / LEV_HEDGE)) < 0.01             # marge : 70 % x 150 - 95 = 10 $ libres -> ~23 $ de short au plus
+    low = enter(101.0)
+    assert low["r_size"] == "" and "marge insuffisante" in low["r_note"]
+    one = json.loads(enter(97.0)["r_legs"])                                                       # ~18 $ : une seule ligne, au notionnel du short
+    assert len(one) == 1 and abs(one[0][1] * one[0][2] - 8 / (1 / LEV_SHORT + 1 / LEV_HEDGE)) < 1
     print("self-check OK")
 
 
