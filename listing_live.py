@@ -30,7 +30,8 @@ import listing_feed as lf
 LIVE = pathlib.Path("live")
 INFO = "https://api.hyperliquid.xyz/info"
 ASTER = "https://fapi.asterdex.com"
-VENUES = {("upbit", "spot_krw"), ("bithumb", "spot_krw"), ("coinbase", "spot"), ("binance", "spot"), ("robinhood", "spot")}
+VENUES = {("upbit", "spot_krw"), ("bithumb", "spot_krw"), ("coinbase", "spot"), ("binance", "spot"), ("robinhood", "spot"),
+          ("binance", "perp")}                                  # listing de PERP Binance : suivi FICTIF seulement (spec 18), jamais d'ordre reel
 DELAY_S, HOLD_S, STOP = 36 * 3600, 120 * 3600, 0.5
 LATE_S = 6 * 3600                  # tolerance de retard a l'entree. La tache GitHub ne delivre que ~1 passage sur 4 (trous jusqu'a 4,6 h) ; le backtest montre
                                    # un plateau du delai d'entree (+36 h a +60 h : +259 a +328 pb couvert), donc entrer tard vaut bien mieux que manquer le trade.
@@ -47,7 +48,7 @@ KEY_WARN_DAYS = 14
 A_COLS = ["ts", "venue", "market", "ticker", "n_tickers", "head", "source"]
 R_COLS = ["real", "r_size", "r_px_in", "r_stop", "r_legs", "r_px_out", "r_legs_out", "r_net_usd", "r_note"]
 J_COLS = ["id", "t_ann", "venue", "ticker", "exch", "coin", "status", "note", "entry_ts", "exit_ts", "t_in", "bid", "ask", "spread_bp", "px_in", "slip_1k_bp", "slip_5k_bp",
-          "funding_in", "day_vol_musd", "legs", "legs_px_in", "t_out", "px_out", "funding_sum", "legs_px_out", "legs_funding", "short_net", "hedge_net", "net_hedged"] + R_COLS
+          "funding_in", "day_vol_musd", "legs", "legs_px_in", "t_out", "px_out", "funding_sum", "legs_px_out", "legs_funding", "short_net", "hedge_net", "net_hedged"] + R_COLS + ["market"]
 
 
 # ---------------------------------------------------------------- fonctions pures
@@ -210,6 +211,9 @@ def collect(now, alerts):
             tk = lf.parse_binance(a["title"])
             if tk:
                 out += [(a["releaseDate"] // 1000, "binance", "spot", t, len(tk), a["title"][:200], "binance_cms") for t in tk]
+            tp = lf.parse_binance_perp(a["title"])
+            if tp:
+                out += [(a["releaseDate"] // 1000, "binance", "perp", t, len(tp), a["title"][:200], "binance_cms") for t in tp]
         return out
 
     def bithumb():
@@ -359,25 +363,27 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None):
     """Fait avancer le journal. ctx = {perp Hyperliquid: contexte de marche} ; aster_syms = {ticker: symbole Aster} ; broker = ordres du pilote, ou None."""
     live = bool(broker and broker.live)
     positions = broker.state()[1] if live else {}                   # etat du compte AVANT ce passage : ne sert qu'aux positions ouvertes a un passage precedent
-    busy = {j["ticker"] for j in journal if j["status"] in ("signal", "ouvert")}
+    fam = lambda x: x.get("market") == "perp"                       # deux familles independantes : un suivi fictif de perp ne bloque jamais un signal spot reel
+    busy = {(fam(j), j["ticker"]) for j in journal if j["status"] in ("signal", "ouvert")}
     for a in new_ann:                                               # 1. nouvelles annonces -> signal ou ineligible
-        t, tick = int(a["ts"]), a["ticker"].upper()
+        t, tick, perp = int(a["ts"]), a["ticker"].upper(), a.get("market") == "perp"
         coin = hl_coin(tick, ctx)
         exch, coin = ("hl", coin) if coin else ("aster", (aster_syms or {}).get(tick))
         entry, exit_ = schedule(t)
-        j = {c: "" for c in J_COLS} | {"id": f"{a['venue']}-{tick}-{t}", "t_ann": t, "venue": a["venue"], "ticker": tick, "exch": exch if coin else "", "coin": coin or "",
-                                       "entry_ts": entry, "exit_ts": exit_}
-        recent = any(x["ticker"] == tick and x["status"] != "ineligible" and abs(int(x["t_ann"]) - t) < 86400 for x in journal)
+        j = {c: "" for c in J_COLS} | {"id": f"{a['venue']}-{'perp-' if perp else ''}{tick}-{t}", "t_ann": t, "venue": a["venue"], "ticker": tick, "exch": exch if coin else "",
+                                       "coin": coin or "", "entry_ts": entry, "exit_ts": exit_, "market": a.get("market", "")}
+        recent = any(fam(x) == perp and x["ticker"] == tick and x["status"] != "ineligible" and abs(int(x["t_ann"]) - t) < 86400 for x in journal)
         if coin is None:
             j |= {"status": "ineligible", "note": "pas de perp sur Hyperliquid ni sur Aster" if aster_syms else "pas de perp sur Hyperliquid (Aster injoignable)"}
-        elif tick in busy or recent:
+        elif (perp, tick) in busy or recent:
             j |= {"status": "ineligible", "note": "deja un signal ou une position sur ce coin"}
         elif now > entry + LATE_S:
             j |= {"status": "ineligible", "note": "annonce vue trop tard"}
         else:
             ok, why = eligible(candles(exch, coin, t - 3 * 86400, t), t)
             j |= {"status": "signal" if ok else "ineligible", "note": why}
-            busy |= {tick} if ok else set()
+            j["note"] = why or ("listing de perp : suivi fictif seulement (spec 18)" if perp else "")
+            busy |= {(perp, tick)} if ok else set()
         journal.append(j)
         alerts.append(f"ANNONCE {a['venue']} {tick} -> {j['status']} {j['note']}" + (f" | entree prevue {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(entry))} sur {exch}:{coin}" if j["status"] == "signal" else ""))
     for j in journal:                                               # 2. entrees dues
@@ -399,7 +405,7 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None):
               "funding_in": ctx[j["coin"]].get("funding", "") if j["exch"] == "hl" else "", "day_vol_musd": "" if vol == "" else round(vol, 2),
               "legs": json.dumps(legs), "legs_px_in": json.dumps([float(ctx[c]["midPx"] or ctx[c]["markPx"]) for c in legs])}
         alerts.append(f"ENTREE FICTIVE short {j['exch']}:{j['coin']} a {px} (spread {s['spread_bp']:.1f} pb, glissement 1 k$ {j['slip_1k_bp']} pb, 5 k$ {j['slip_5k_bp']} pb)")
-        if broker and j["exch"] == "hl":
+        if broker and j["exch"] == "hl" and not fam(j):               # un listing de perp n'est PAS la regle v1 : aucun ordre reel, quel que soit HL_LIVE
             real_enter(j, s, ctx, broker, journal, alerts)
     for j in journal:                                               # 3. stops et sorties
         if j["status"] != "ouvert":
@@ -564,6 +570,12 @@ def _selftest():
     del b2.pos["SUI"]                                                                             # le stop de l'exchange a rachete le short
     step(t + 7260, j2, [], a2, ctx2, {}, b2)
     assert s2["status"] == "stoppe" and "stop de l'exchange" in s2["r_note"] and sum(x[:2] == ("SUI", "buy") for x in b2.sent) == 0 and b2.pos == {} and s2["r_net_usd"] != ""
+    b3 = Fake(live=True)                                                                          # listing de perp : fictif seulement, et ne bloque pas le spot du meme coin
+    jp = [{c: "" for c in J_COLS} | {"id": "p", "ticker": "SUI", "exch": "hl", "coin": "SUI", "status": "signal", "entry_ts": t, "exit_ts": t + HOLD_S, "t_ann": t - DELAY_S, "market": "perp"}]
+    step(t + 60, jp, [], [], ctx2, {}, b3)
+    assert jp[0]["status"] == "ouvert" and jp[0]["r_size"] == "" and b3.sent == [] and b3.pos == {}
+    step(t + 120, jp, [{"ts": t - 3600, "venue": "binance", "market": "spot", "ticker": "SUI"}], [], ctx2, {}, b3)
+    assert jp[1]["note"] != "deja un signal ou une position sur ce coin" and jp[1]["market"] == "spot"
     eth = {c: "" for c in J_COLS} | {"id": "e", "ticker": "ETH", "exch": "hl", "coin": "ETH", "status": "ouvert", "legs": "[]", "r_note": ""}
     real_enter(eth, {"bid": 2000.0}, ctx2, Fake(live=False), [dict(sig) | {"r_net_usd": "", "r_px_out": "", "r_legs": json.dumps([["ETH", 0.0055, 2000]]), "r_legs_out": ""}, eth], [])
     assert eth["r_size"] == "" and "deja en portefeuille" in eth["r_note"]                        # ETH sert de couverture ailleurs : pas de short reel dessus

@@ -40,6 +40,7 @@ TICKER = r"[A-Z0-9]{1,12}"
 WIRE_HEAD = re.compile(r"^(?:据官方公告，|据官方消息，|韩国|第二大|最大|加密货币|加密|交易所|交易平台|\s)*(Upbit|Bithumb|Coinbase|Robinhood)\s*(?:Crypto|Markets|Assets)?\s*(?:宣布|称|：|:)?\s*"
                        r"(将于今日|将于[^上，]{0,14}|将在[^上，]{0,14}|即将|计划|将|新增|现已|已|正式)?\s*(?:上线|上架)", re.I)
 WIRE_BAD = re.compile(r"永续|合约|期货|期权|杠杆|下架|下线|终止|路线图|国际|International|衍生|钱包|Wallet|质押|借贷|贷款|股票|ETF|预测|Chain|链上|功能|活动|空投|储备|指数|理财|Earn|应用|版本|影响|转账|充提|充值|提现", re.I)
+PERP_BAD = re.compile(r"(?i)equity|tradfi|stock|index|pre-market|premarket|pre-ipo|commodit|gold|silver|quarterly|delivery|coin-m")
 WIRE_MARKET = {"bithumb": "spot_krw", "coinbase": "spot", "robinhood": "spot"}       # Bithumb ne liste presque que contre le won : meme convention que l'echantillon
 
 
@@ -129,11 +130,26 @@ def parse_binance(title):
     return None
 
 
+def parse_binance_perp(title):
+    """Article Binance -> [tickers] si c'est le lancement d'un perp CRYPTO ("Binance Futures Will Launch USDⓈ-Margined XUSDT ... Perpetual"), sinon None.
+    Exclus : perps d'actions, d'indices, TradFi, pre-market / pre-IPO, contrats a livraison. Suivi FICTIF seulement (spec 18)."""
+    h = title.lower()
+    if "futures will launch" not in h or "perpetual" not in h or PERP_BAD.search(title):
+        return None
+    out = []
+    for t in re.findall(r"\b([A-Z0-9]{2,20})USD[TC]\b", title):
+        t = re.sub(r"^(1000000|10000|1000|1M)", "", t)
+        if t not in NOT_A_COIN and t not in out:
+            out.append(t)
+    return out or None
+
+
 def dedup(rows):
-    """rows (ts, lieu, marche, ticker, ...) -> sans les redites du meme (lieu, ticker) dans les DEDUP_DAYS jours qui suivent une annonce retenue."""
+    """rows (ts, lieu, marche, ticker, ...) -> sans les redites du meme (lieu, ticker) dans les DEDUP_DAYS jours qui suivent une annonce retenue.
+    Les annonces de perp sont dedoublonnees a part : un listing de perp ne doit jamais masquer un listing spot du meme coin (seul le spot porte la regle v1)."""
     last, out = {}, []
     for r in sorted(rows):
-        k = (r[1], r[3])
+        k = (r[1], r[2] == "perp", r[3])
         if k not in last or r[0] - last[k] > DEDUP_DAYS * 86400:
             out.append(r)
             last[k] = r[0]
@@ -260,6 +276,16 @@ def _selftest():
     assert bt("소닉(S) 입출금 일시 중지 안내 (09/21 오후 8시~)") is None and bt("9월 3주차 가스(GAS) 에어드랍 지급 안내") is None
     assert bt("[이벤트] 총 3억원 상당, 젠신(AI) 원화마켓 추가 기념 이벤트") is None                     # evenement marketing autour d'un listing
     assert kst_epoch("2026-09-21 09:00:00") == kst_epoch("2026-09-21 00:00:00") + 9 * 3600 and dt.datetime.fromtimestamp(kst_epoch("2026-01-01 09:00:00"), dt.timezone.utc).hour == 0
+    bp = parse_binance_perp
+    assert bp("Binance Futures Will Launch USDⓈ-Margined JELLYJELLYUSDT and MAVIAUSDT Perpetual Contracts") == ["JELLYJELLY", "MAVIA"]
+    assert bp("Binance Futures Will Launch USDⓈ-Margined KDAUSDT Perpetual Contract With up to 75x Leverage") == ["KDA"]
+    assert bp("Binance Futures Will Launch USDⓈ-Margined 1000CHEEMSUSDT Perpetual Contract") == ["CHEEMS"]
+    assert bp("Binance Futures Will Launch USDⓈ-Margined INTCUSDT and HOODUSDT Equity Perpetual Contracts (2026-04-01)") is None
+    assert bp("Binance Futures Will Launch MOONSHOTUSDT USDⓈ-Margined Pre-IPO Perpetual Contract") is None
+    assert bp("Binance Futures Will Launch USDBRLUSDT USDⓈ-Margined TradFi Perpetual Contract (2026-09-21)") is None
+    assert bp("Binance Will List Jito (JTO) with Seed Tag Applied") is None and parse_binance("Binance Futures Will Launch USDⓈ-Margined KDAUSDT Perpetual Contract") is None
+    d2 = dedup([(0, "binance", "perp", "X"), (86400, "binance", "spot", "X"), (2 * 86400, "binance", "perp", "X")])
+    assert [(r[0], r[2]) for r in d2] == [(0, "perp"), (86400, "spot")]                      # le perp ne masque pas le spot ; la redite de perp est ecartee
     b = parse_binance
     assert b("Binance Will List Jito (JTO) with Seed Tag Applied") == ["JTO"]
     assert b("Binance Futures Will Launch USDⓈ-Margined PLUMEUSDT Perpetual Contract") is None
