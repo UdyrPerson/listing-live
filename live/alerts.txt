@@ -1,3 +1,0 @@
-ENTREE FICTIVE short aster:QUSDT a 0.024437970978325077 (spread 19.6 pb, glissement 1 k$ 11.05 pb, 5 k$ 17.09 pb)
-ENTREE FICTIVE short hl:CASHCAT a 0.17832118888048004 (spread 7.3 pb, glissement 1 k$ 7.5 pb, 5 k$  pb)
-ENTREE REEL short 261.0 CASHCAT a 0.1784 (47 $) ; stop 560470422038 ; couverture 47 $ [('ETH', 0.0043), ('NEAR', 2.3), ('PUMP', 1989.0), ('SOL', 0.1)] ; taille 47 $ = 50% x 152 $ x min(1, 8% / vol 13.1%), marge deja bloquee 14 $
