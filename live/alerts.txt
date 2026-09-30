@@ -1,2 +1,0 @@
-SORTIE FICTIVE (clos) hl:HYPE : short +188 pb, couverture -290 pb, total -102 pb | test sequentiel : n 1, S -0.010, bornes [-1.93 ; +1.97] -> en cours
-SORTIE REEL HYPE : -0.09 $ (-40 pb du notionnel)
