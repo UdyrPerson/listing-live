@@ -3,3 +3,4 @@ ts,venue,market,ticker,n_tickers,head,source
 1790571090,bithumb,spot_krw,PYUSD,2,"쿼크에이아이(Q), 페이팔유에스디(PYUSD) 원화 마켓 추가",bithumb_api
 1790571090,bithumb,spot_krw,Q,2,"쿼크에이아이(Q), 페이팔유에스디(PYUSD) 원화 마켓 추가",bithumb_api
 1790573232,upbit,spot_krw,CASHCAT,1,【Upbit 将上线 CASHCAT 韩元、BTC 及 USDT 交易对】,ForesightNews
+1790836201,binance,perp,CT,1,Binance Futures Will Launch USDⓈ-Margined CTUSDT Perpetual Contract (2026-10-01),binance_cms
