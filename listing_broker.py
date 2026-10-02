@@ -36,6 +36,12 @@ def why(e):
     return f"{type(e).__name__} : " + re.sub(r"(0x)?[0-9a-fA-F]{40,}", "<masque>", str(e))[:220]
 
 
+def account_value(ch, spot):
+    """clearinghouseState + soldes spot -> valeur du compte en $. En mode "unified account" le solde USDC spot INCLUT deja le PnL latent des perps
+    (verifie le 2026-10-01 : il egale la valeur publiee par Hyperliquid) ; hors de ce mode, c'est la valeur perp qui le porte. Ne jamais le rajouter."""
+    return max(float(ch["marginSummary"]["accountValue"]), sum(float(b["total"]) for b in spot if b["coin"] == "USDC"))
+
+
 def round_size(usd, px, step):
     """Taille pour ~usd de notionnel, arrondie au pas du marche, jamais sous le minimum de l'exchange."""
     n = max(1, round(usd / px / step))
@@ -63,10 +69,7 @@ class Broker:
         """-> (valeur du compte en $, {coin: taille signee}, marge initiale bloquee en $). En mode "unified account" la marge est le USDC du cote spot."""
         ch = requests.post(INFO, json={"type": "clearinghouseState", "user": self.account}, timeout=30).json()
         spot = requests.post(INFO, json={"type": "spotClearinghouseState", "user": self.account}, timeout=30).json().get("balances", [])
-        usdc = sum(float(b["total"]) for b in spot if b["coin"] == "USDC")
-        upnl = sum(float(p["position"]["unrealizedPnl"]) for p in ch["assetPositions"])
-        value = max(float(ch["marginSummary"]["accountValue"]), usdc + upnl)
-        return value, {p["position"]["coin"]: float(p["position"]["szi"]) for p in ch["assetPositions"] if float(p["position"]["szi"]) != 0}, float(ch["marginSummary"]["totalMarginUsed"])
+        return account_value(ch, spot), {p["position"]["coin"]: float(p["position"]["szi"]) for p in ch["assetPositions"] if float(p["position"]["szi"]) != 0}, float(ch["marginSummary"]["totalMarginUsed"])
 
     def size_for(self, coin, usd, px):
         return round_size(usd, px, self.x.markets[self.sym[coin]]["precision"]["amount"])
@@ -116,6 +119,9 @@ def _selftest():
     assert round_size(22, 0.97, 0.1) == 22.7 and round_size(11, 2673.0, 0.0001) == 0.0041            # 22 $ de SUI, 11 $ d'ETH
     assert round_size(11, 95000.0, 0.001) == 0.001 * math.ceil(MIN_USD / 95000.0 / 0.001)            # pas trop gros : on monte jusqu'au minimum de 10 $
     assert round_size(11, 95000.0, 0.001) * 95000.0 >= MIN_USD
+    ch = {"marginSummary": {"accountValue": "18.363919"}, "assetPositions": [{"position": {"unrealizedPnl": "2.9729"}}]}         # releve du 2026-10-01
+    assert account_value(ch, [{"coin": "USDC", "total": "152.9458"}]) == 152.9458                    # = valeur Hyperliquid, PnL latent compte une seule fois
+    assert account_value({"marginSummary": {"accountValue": "150.3"}}, []) == 150.3                  # compte classique : tout est cote perp
     os.environ.pop("HL_AGENT_KEY", None)
     assert credentials() == (None, None) or all(credentials())                                       # jamais a moitie : compte ET cle, ou rien
     print("self-check OK")
