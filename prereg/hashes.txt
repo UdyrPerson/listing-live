@@ -1,3 +1,4 @@
 # Empreintes de pre-enregistrement (SHA-256 tronque a 16 caracteres), publiees avant toute lecture des donnees testees
 2026-09-26  T-B  474c57a9191badba
 2026-10-04  microcap-H1  18b4ca6bf201b415
+2026-10-05  microcap-prereg-v0  9dd771516f1f3dee
