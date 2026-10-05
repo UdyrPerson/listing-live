@@ -2,3 +2,5 @@
 2026-09-26  T-B  474c57a9191badba
 2026-10-04  microcap-H1  18b4ca6bf201b415
 2026-10-05  microcap-prereg-v0  9dd771516f1f3dee
+2026-10-05  microcap-baserate  92c8a05e699b656b
+2026-10-05  microcap-forward  acae6dd3d1ce3a91
