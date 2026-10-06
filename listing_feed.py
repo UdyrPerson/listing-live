@@ -1,4 +1,5 @@
-"""Annonces de listing spot des grands exchanges, normalisees. TEXTE SEUL : aucun prix n'est lu ici.
+"""Annonces de listing spot des grands exchanges, normalisees. Les annonces sont du TEXTE SEUL ; seuls ref_price / same_asset / aster_crypto
+lisent un prix ou une fiche de contrat, pour verifier avant un ordre que le perp est bien le coin annonce (collisions de tickers).
 
     .venv/Scripts/python listing_feed.py          # -> data/listings/announcements.parquet (+ caches des API officielles)
     .venv/Scripts/python listing_feed.py --test   # analyseurs sur messages figes, sans reseau
@@ -42,6 +43,14 @@ WIRE_HEAD = re.compile(r"^(?:据官方公告，|据官方消息，|韩国|第二
 WIRE_BAD = re.compile(r"永续|合约|期货|期权|杠杆|下架|下线|终止|路线图|国际|International|衍生|钱包|Wallet|质押|借贷|贷款|股票|ETF|预测|Chain|链上|功能|活动|空投|储备|指数|理财|Earn|应用|版本|影响|转账|充提|充值|提现", re.I)
 PERP_BAD = re.compile(r"(?i)equity|tradfi|stock|index|pre-market|premarket|pre-ipo|commodit|gold|silver|quarterly|delivery|coin-m")
 WIRE_MARKET = {"bithumb": "spot_krw", "coinbase": "spot", "robinhood": "spot"}       # Bithumb ne liste presque que contre le won : meme convention que l'echantillon
+KRW_TICKER = {"upbit": "https://api.upbit.com/v1/ticker", "bithumb": "https://api.bithumb.com/v1/ticker"}
+BINANCE_BOOK = "https://data-api.binance.vision/api/v3/ticker/bookTicker"           # api.binance.com repond 451 depuis les serveurs GitHub (Etats-Unis)
+COINBASE = "https://api.exchange.coinbase.com/products"
+ASTER_CRYPTO_SUB = {"Top", "Meme", "AI"}       # sous-types Aster des perps crypto (2026-10-06) ; tout autre (STOCK, ETF, Commodities, AOS2, USD1-RWA, pre-launch, inconnu) = exclu
+SAME_BAND = 1.5     # meme actif si 1/1,5 <= p_perp / p_ref <= 1,5. Mesure 2026-10-06 sur 106 listings recents (Upbit, Bithumb, Coinbase, Binance, Robinhood), heure t+36 h,
+                    # contre le perp HL ou Binance : |ecart| median 0,3 %, p90 1,5 %, max sain x1,125 (XCN, prime coreenne) ; plus petite vraie collision x2,0
+                    # (AI : Gensyn sur Upbit, Sleepless AI en perp). 1,5 = leur milieu geometrique. MANTRA n'est PAS une collision (meme coin que Binance spot) :
+                    # prime isolee x1,12 sur Upbit, x1,6 sur Bithumb, coin sous avertissement "ecart de prix mondial" ; rejete a x1,6 = trade rate, accepte.
 
 
 def tickers(text):
@@ -111,6 +120,80 @@ def krw_markets(venue):
     if len(out) < 50:
         raise RuntimeError(f"liste de marches {venue} suspecte ({len(out)} lignes)")      # reponse tronquee : ne jamais l'interpreter comme des retraits
     return out
+
+
+def aster_crypto(s):
+    """Element de GET /fapi/v1/exchangeInfo (champ "symbols") -> True si c'est un perp sur une CRYPTO.
+    underlyingType vaut "COIN" partout (METAUSDT = l'action Meta compris) : inutile. Regle, liste blanche : symbolType 0 (les 138 symboles a 1 sont
+    actions, ETF, matieres premieres, change, pre-IPO) ET sous-types tous dans ASTER_CRYPTO_SUB. Un sous-type nouveau exclut : rater un trade plutot qu'un mauvais actif."""
+    return (s.get("contractType") == "PERPETUAL" and s.get("symbolType") == 0
+            and set(s.get("underlyingSubType") or ()) <= ASTER_CRYPTO_SUB)
+
+
+def lot(name):
+    """Unites de coin par unite cotee, d'apres le prefixe : 1000PEPEUSDT, kPEPE (Hyperliquid), 1000CHEEMS -> 1000 ; 1MBABYDOGE -> 1e6 ; PEPE, 1INCH -> 1."""
+    m = re.match(r"(1000000|10000|1000|1M|k)(?=[A-Z])", name)
+    return {"1000000": 1e6, "10000": 1e4, "1000": 1e3, "1M": 1e6, "k": 1e3}[m.group(1)] if m else 1
+
+
+def _px_json(url, **params):
+    """Un GET de prix public -> json, ou None (symbole inconnu, ou API muette apres 3 essais)."""
+    for k in range(3):
+        try:
+            r = requests.get(url, params=params, headers=UA, timeout=15)
+            if r.status_code == 200:
+                return r.json()
+            if r.status_code in (400, 404):                     # symbole inconnu ou retire : definitif
+                return None
+        except (requests.RequestException, ValueError):
+            pass
+        time.sleep(2 * (k + 1))
+    return None
+
+
+def _mid(bid, ask):
+    b, a = float(bid), float(ask)
+    return (a + b) / 2 if a > 0 and b > 0 else None              # carnet vide = paire retiree (Binance garde un dernier prix fige, ex. XMRUSDT)
+
+
+def ref_price(venue, market, ticker):
+    """Prix en $ d'UNE unite de `ticker` (tel qu'ecrit dans l'annonce) SUR LE LIEU QUI L'A LISTE, ou None si introuvable.
+      upbit, bithumb  dernier prix KRW-<T> / KRW-USDT du MEME lieu (la prime coreenne generale s'annule). Toujours le marche won, quel que soit `market` ;
+                      None si le marche n'existe pas ou n'a pas encore d'echange (Bithumb : trade_price null avant l'ouverture).
+      binance         milieu du carnet <T>USDT (data-api.binance.vision). Une annonce de perp (market "perp") n'a souvent pas de spot : None.
+      coinbase        milieu du carnet <T>-USD, sinon <T>-USDC.
+      robinhood       pas d'API de prix publique : prix Coinbase, sinon Binance. Si les deux existent et se contredisent (same_asset faux), le ticker
+                      est ambigu : None. Limite : on verifie l'actif de Coinbase / Binance, pas celui de Robinhood.
+    Le moteur compare avec same_asset(ref, prix du perp, lot(symbole du perp) / lot(ticker)) : PEPE sur Upbit contre 1000PEPEUSDT -> mult 1000,
+    1000CHEEMS sur Binance contre 1000CHEEMSUSDT ou kCHEEMS -> mult 1. None = identite non verifiable : pas d'ordre reel."""
+    t = ticker.upper()
+    try:
+        if venue in KRW_TICKER:
+            d = {x["market"]: float(x["trade_price"]) for x in _px_json(KRW_TICKER[venue], markets=f"KRW-{t},KRW-USDT")}
+            return d[f"KRW-{t}"] / d["KRW-USDT"]
+        if venue == "binance":
+            d = _px_json(BINANCE_BOOK, symbol=t + "USDT")
+            return _mid(d["bidPrice"], d["askPrice"])
+        if venue == "coinbase":
+            for q in ("USD", "USDC"):
+                d = _px_json(f"{COINBASE}/{t}-{q}/ticker")
+                if d:
+                    return _mid(d["bid"], d["ask"])
+            return None
+        if venue == "robinhood":
+            ps = [p for p in (ref_price("coinbase", market, t), ref_price("binance", market, t)) if p]
+            return ps[0] if len(ps) == 1 or ps and same_asset(ps[0], ps[1])[0] else None
+    except (TypeError, KeyError, ValueError, ZeroDivisionError):    # reponse d'erreur (Bithumb : 200 + {"error"}), champ vide, prix nul
+        return None
+    return None
+
+
+def same_asset(p_ref, p_perp, mult=1):
+    """-> (meme actif ?, ratio p_perp / (mult x p_ref)). mult = lot(symbole du perp) / lot(ticker de l'annonce). Bande : SAME_BAND."""
+    if not (p_ref and p_perp) or min(p_ref, p_perp) <= 0:
+        return False, None
+    r = p_perp / (mult * p_ref)
+    return 1 / SAME_BAND <= r <= SAME_BAND, r
 
 
 def kst_epoch(s):
@@ -294,6 +377,44 @@ def _selftest():
     assert b("Binance Will Add Plume (PLUME) on Earn, Buy Crypto, Convert & Margin") is None and b("Binance Will Delist ABC (ABC)") is None
     d = dedup([(0, "bithumb", "spot_krw", "X"), (86400, "bithumb", "spot_krw", "X"), (86400, "upbit", "spot_krw", "X"), (20 * 86400, "bithumb", "spot_krw", "X")])
     assert [r[0] for r in d] == [0, 86400, 20 * 86400] and d[1][1] == "upbit"                  # redite a J+1 ignoree ; autre lieu et annonce a J+20 gardes
+    # identite des coins : fiches Aster et reponses de prix figees (formes reelles du 2026-10-06), sans reseau
+    fiche = lambda sym, st, sub: {"symbol": sym, "contractType": "PERPETUAL", "underlyingType": "COIN", "symbolType": st, "underlyingSubType": sub}
+    assert aster_crypto(fiche("HYPEUSDT", 0, [])) and aster_crypto(fiche("1000PEPEUSDT", 0, ["Meme"])) and aster_crypto(fiche("BTCUSDT", 0, ["Top"]))
+    assert not aster_crypto(fiche("METAUSDT", 1, ["STOCK"])) and not aster_crypto(fiche("PAXGUSDT", 1, ["Commodities"]))       # l'action Meta, l'or
+    assert not aster_crypto(fiche("POLYMARKETUSD1", 0, ["pre-launch", "STOCK", "AOS2", "USD1-RWA"])) and not aster_crypto(fiche("NEWUSDT", 0, ["DeFi"]))
+    assert lot("1000PEPEUSDT") == lot("kPEPE") == lot("1000CHEEMS") == 1000 and lot("1MBABYDOGEUSDT") == 1e6 and lot("10000ELONUSDT") == 1e4
+    assert lot("PEPE") == lot("1INCHUSDT") == lot("KAITOUSDT") == 1
+    assert same_asset(1.0, 1.45) == (True, 1.45) and same_asset(1.0, 1.0 / 1.125)[0] and not same_asset(1.0, 1 / 1.6)[0] and not same_asset(2.0, 1.0)[0]   # XCN ; MANTRA Bithumb ; AI
+    assert not same_asset(0.0128, 700.0)[0] and not same_asset(None, 1.0)[0] and same_asset(0.0, 1.0) == (False, None)     # META : Metadium (Upbit) contre l'action Meta
+    assert same_asset(1.0e-5, 0.0101, lot("1000PEPEUSDT") / lot("PEPE"))[0] and not same_asset(1.0e-5, 0.0101)[0]          # cote par milliers : sans mult, x1010
+    fake = {("https://api.upbit.com/v1/ticker", "KRW-CASHCAT,KRW-USDT"): [{"market": "KRW-CASHCAT", "trade_price": 204.0}, {"market": "KRW-USDT", "trade_price": 1400.0}],
+            ("https://api.bithumb.com/v1/ticker", "KRW-BR,KRW-USDT"): [{"market": "KRW-BR", "trade_price": None}, {"market": "KRW-USDT", "trade_price": 1400.0}],
+            ("https://api.bithumb.com/v1/ticker", "KRW-NOPE,KRW-USDT"): {"error": {"name": 404, "message": "Code not found"}},          # Bithumb : erreur en HTTP 200
+            ("https://api.upbit.com/v1/ticker", "KRW-META,KRW-USDT"): [{"market": "KRW-META", "trade_price": 18.0}, {"market": "KRW-USDT", "trade_price": 1400.0}],
+            (BINANCE_BOOK, "HYPEUSDT"): {"bidPrice": "92.5", "askPrice": "93.0"}, (BINANCE_BOOK, "XMRUSDT"): {"bidPrice": "0.0", "askPrice": "0.0"},
+            (BINANCE_BOOK, "RAYUSDT"): {"bidPrice": "2.25", "askPrice": "2.5"}, (BINANCE_BOOK, "AIUSDT"): {"bidPrice": "0.29", "askPrice": "0.31"},
+            (f"{COINBASE}/RAY-USD/ticker", None): {"bid": "2.0", "ask": "2.5"}, (f"{COINBASE}/AI-USD/ticker", None): {"bid": "0.039", "ask": "0.041"},
+            (f"{COINBASE}/EURC-USDC/ticker", None): {"bid": "1.125", "ask": "1.375"}}
+
+    class Resp:
+        def __init__(self, body):
+            self.status_code, self.body = (200, body) if body is not None else (404, {"message": "NotFound"})
+
+        def json(self):
+            return self.body
+    real_get = requests.get
+    requests.get = lambda url, params=None, **kw: Resp(fake.get((url, (params or {}).get("markets") or (params or {}).get("symbol"))))
+    try:
+        assert ref_price("upbit", "spot_krw", "cashcat") == 204.0 / 1400.0
+        assert ref_price("bithumb", "spot_krw", "BR") is None and ref_price("bithumb", "spot_krw", "NOPE") is None     # marche ouvert sans echange ; ticker inconnu
+        assert ref_price("binance", "spot", "HYPE") == 92.75 and ref_price("binance", "spot", "XMR") is None             # carnet vide : paire retiree
+        assert ref_price("coinbase", "spot", "RAY") == 2.25 and ref_price("coinbase", "spot", "EURC") == 1.25 and ref_price("coinbase", "spot", "NOPE") is None
+        assert ref_price("robinhood", "spot", "RAY") == 2.25 and ref_price("robinhood", "spot", "HYPE") == 92.75           # Coinbase d'abord, sinon Binance
+        assert ref_price("robinhood", "spot", "AI") is None                         # Coinbase et Binance se contredisent (x7,5) : ticker ambigu
+        assert ref_price("kraken", "spot", "RAY") is None
+        assert not same_asset(ref_price("upbit", "spot_krw", "META"), 700.0)[0]      # collision : Metadium a ~0,013 $ contre METAUSDT a ~700 $
+    finally:
+        requests.get = real_get
     print("self-check OK")
 
 
