@@ -8,4 +8,5 @@ Pilote experimental, en taille minuscule, d'une regle de trading sur les annonce
 - `.github/workflows/listing-live.yml` : un passage par heure ; l'etat `live/` est versionne par la tache, chaque evenement ouvre une issue.
 
 Securite : aucune cle dans ce depot. La cle d'agent (qui peut trader mais pas retirer) et l'adresse du compte sont des secrets GitHub Actions ;
-les messages d'erreur masquent tout ce qui ressemble a une cle, une signature ou une adresse. Arret d'urgence : creer le fichier `live/STOP`.
+les messages d'erreur masquent tout ce qui ressemble a une cle, une signature ou une adresse. Arret d'urgence : creer le fichier `live/STOP` (cree aussi automatiquement par un arret dur ; le supprimer pour reprendre).
+Dependances : toutes figees dans `requirements.txt`.

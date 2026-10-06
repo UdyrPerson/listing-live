@@ -12,9 +12,10 @@ cher), sinon Aster, en FICTIF SEULEMENT (research/execution-venues.md). Etat dan
   health.json        nombre de passages rates de suite, par source
   markets.json       tickers en won cotes sur Upbit et Bithumb au dernier passage (detecteur de listing de secours)
   equity.csv         valeur du compte a chaque passage (seulement avec une cle)
-  STOP               s'il existe, plus aucune entree reelle (les sorties continuent) : arret d'urgence, a creer a la main dans le depot
-Regle : research/listing-strategy-v1.md. Short a +36 h, 5 jours, stop +50 %, couverture = panier equipondere des HEDGE_N perps Hyperliquid les plus
-traites (hors BTC, hors le coin, hors coins shortes par ailleurs), beta 1. Pilote reel : short de F x capital x min(1, VOL_REF / vol 3 j), couverture au meme notionnel.
+  STOP               s'il existe, plus aucune entree reelle (les sorties continuent) : arret d'urgence, a creer a la main dans le depot, ou cree par un
+                     arret dur (hard_stops) ; on le supprime a la main pour reprendre
+Regle : research/listing-strategy-v1.md (v1.1). Short a +36 h, 5 jours, stop +50 %, couverture = panier equipondere fixe HEDGE (hors coins shortes
+par ailleurs), beta 1. Pilote reel : short de F x capital x min(1, VOL_REF / vol 3 j), couverture au meme notionnel, short total <= MAX_SHORT x capital.
 """
 import csv
 import json
@@ -38,21 +39,26 @@ DELAY_S, HOLD_S, STOP = 36 * 3600, 120 * 3600, 0.5
 LATE_S = 6 * 3600                  # tolerance de retard a l'entree. La tache GitHub ne delivre que ~1 passage sur 4 (trous jusqu'a 4,6 h) ; le backtest montre
                                    # un plateau du delai d'entree (+36 h a +60 h : +259 a +328 pb couvert), donc entrer tard vaut bien mieux que manquer le trade.
 LOOKBACK_S = 12 * 3600             # profondeur de relecture des fils a chaque passage (la tache GitHub peut sauter des heures)
-HEDGE_N = 5
+HEDGE = ("ETH", "SOL", "DOGE", "BNB")  # v1.1 (2026-10-06) : meme risque retire que le panier de mid-caps teste (~25 %), mais celui-ci chutait de 252 pb
+                                    # pendant les tenues et annulait une partie de l'edge ; XRP retire (le moins correle), BTC moins bon a tout ratio
 BEST_EFFORT = {"upbit", "bithumb"}  # sources redondantes (les fils couvrent Upbit a 96 % et Bithumb a 97 %) : une panne ne merite pas d'alerte
 ALERT_AFTER = (6, 24, 72)          # nombre de passages rates de suite qui declenchent une alerte sur une source
 SIZES = (1000, 5000)               # notionnels ($) pour lesquels on releve le prix executable
 TAKER = {"hl": 0.00045, "aster": 0.00035}
 F, VOL_REF, MAX_REAL = 0.5, 0.08, 4            # pilote reel : short de 50 % du capital, reduit si la vol journaliere des 3 j avant l'annonce depasse 8 % (backtest)
 LEV_SHORT, LEV_HEDGE = 3, 10                   # marge croisee seulement, jamais isolee sur un short (framework, section 4) ; plafonnes par l'exchange
-MAX_MARGIN, MIN_LEG = 0.7, 11                  # marge initiale du compte <= 70 % de sa valeur : pas de liquidation avant les stops ; ordre minimum Hyperliquid 10 $
-SPRT_DRIFT, SPRT_BOUND = 0.02, 1.95            # test sequentiel de Wald sur le resultat couvert par trade (research/listing-strategy-v1.md)
+MAX_MARGIN, MIN_LEG = 0.7, 11                  # marge initiale du compte <= 70 % de sa valeur ; ordre minimum Hyperliquid 10 $
+MAX_SHORT = 1.0                                # short total <= 1 x le capital : au-dela de ~1,25 x, un squeeze commun de +50 % liquiderait le compte AVANT les stops
+SPRT_DRIFT, SPRT_BOUND, SPRT_NMAX = 0.00828, 1.337, 264    # Wald H0 0 / H1 238 pb sur le resultat couvert PONDERE par la taille (w = min(1, VOL_REF / vol)),
+                                               # sigma pondere 1 004 pb, erreurs 10 % / 10 % ; simule : arret a tort 12 % si 238 pb, validation a tort 11 % si 0, ~108 trades
+STOPS_MAX, FUND_MIN, FLOOR_USD = (5, 30), -0.02, 100.0     # arrets durs : >= 5 stops sur les 30 derniers trades, funding moyen < -200 pb sur 20, compte < 100 $
 MAX_NEW_MARKETS = 8                # plus de 8 marches neufs d'un coup = etat perdu, pas 8 listings : on reamorce sans emettre
 KEY_WARN_DAYS = 14
 A_COLS = ["ts", "venue", "market", "ticker", "n_tickers", "head", "source"]
-R_COLS = ["real", "r_size", "r_px_in", "r_stop", "r_legs", "r_px_out", "r_legs_out", "r_net_usd", "r_note"]
+R_COLS = ["real", "r_size", "r_px_in", "r_stop", "r_legs", "r_px_out", "r_legs_out", "r_net_usd", "r_note", "r_out"]     # r_out : [quantite rachetee, prix moyen] du short
 J_COLS = ["id", "t_ann", "venue", "ticker", "exch", "coin", "status", "note", "entry_ts", "exit_ts", "t_in", "bid", "ask", "spread_bp", "px_in", "slip_1k_bp", "slip_5k_bp",
-          "funding_in", "day_vol_musd", "legs", "legs_px_in", "t_out", "px_out", "funding_sum", "legs_px_out", "legs_funding", "short_net", "hedge_net", "net_hedged"] + R_COLS + ["market"]
+          "funding_in", "day_vol_musd", "legs", "legs_px_in", "t_out", "px_out", "funding_sum", "legs_px_out", "legs_funding", "short_net", "hedge_net", "net_hedged"] + R_COLS + [
+          "market", "vol3d"]                           # vol3d : vol journaliere des 3 j avant l'annonce (poids du test sequentiel)
 
 
 # ---------------------------------------------------------------- fonctions pures
@@ -105,25 +111,80 @@ def paper_pnl(px_in, px_out, funding_sum, legs_in, legs_out, legs_funding, taker
     return short, hedge, short + hedge
 
 
+def vol3d(candles, t):
+    """Bougies 5 m -> volatilite journaliere des 3 jours avant t (ecart-type de ln(c/o) x racine de 288, comme le backtest), ou None."""
+    rets = [math.log(float(c["c"]) / float(c["o"])) for c in candles if t - 3 * 86400 <= c["t"] // 1000 < t]
+    return statistics.stdev(rets) * 288 ** 0.5 if len(rets) > 1 else None
+
+
+def weight(j):
+    """Poids de taille du trade, celui du pilote reel : min(1, VOL_REF / vol 3 j) ; 1 si la vol n'a pas ete relevee."""
+    return min(1.0, VOL_REF / float(j["vol3d"])) if j["vol3d"] not in ("", "0", "0.0") else 1.0
+
+
 def sprt(values):
-    """Resultats couverts par trade (fractions) -> (n, S, verdict). Valider si S >= 0,02 n + 1,95 ; arreter si S <= 0,02 n - 1,95."""
-    n, s = len(values), sum(values)
-    return n, s, "VALIDE" if s >= SPRT_DRIFT * n + SPRT_BOUND else "ARRET" if s <= SPRT_DRIFT * n - SPRT_BOUND else "en cours"
+    """Resultats couverts ponderes (w x net) dans l'ordre des sorties -> (n, S, verdict). Valider si S >= d n + b, arreter si S <= d n - b. Le premier
+    franchissement est definitif ; a SPRT_NMAX trades sans franchissement, le signe de S - d n tranche."""
+    s = 0.0
+    for n, v in enumerate(values, 1):
+        s += v
+        if s >= SPRT_DRIFT * n + SPRT_BOUND:
+            return n, s, "VALIDE"
+        if s <= SPRT_DRIFT * n - SPRT_BOUND:
+            return n, s, "ARRET"
+        if n == SPRT_NMAX:
+            return n, s, "VALIDE" if s >= SPRT_DRIFT * n else "ARRET"
+    return len(values), s, "en cours"
 
 
-def expected(journal):
-    """Positions que le compte DOIT porter d'apres le journal : {coin: taille signee}. Short tant qu'il n'est pas rachete, lignes tant qu'elles ne sont pas vendues."""
+def v1_closed(journal):
+    """Trades fictifs clos de la regle v1 (hors suivi des listings de perp, autre regle), dans l'ordre des sorties."""
+    return sorted((x for x in journal if x["net_hedged"] != "" and x.get("market") != "perp"), key=lambda x: int(x["t_out"]))
+
+
+def hard_stops(journal, value=None):
+    """Arrets durs (research/listing-strategy-v1.md, recalibres le 2026-10-06) -> raisons ; chacune cree live/STOP. value = valeur du compte reel, ou None."""
+    v1, why = v1_closed(journal), []
+    n, s, verdict = sprt([weight(x) * float(x["net_hedged"]) for x in v1])
+    if verdict == "ARRET":
+        why.append(f"test sequentiel a l'arret (n {n}, S {s:+.3f})")
+    last = v1[-STOPS_MAX[1]:]
+    if sum(x["status"] == "stoppe" for x in last) >= STOPS_MAX[0]:
+        why.append(f"{sum(x['status'] == 'stoppe' for x in last)} stops sur les {len(last)} derniers trades")
+    fund = [float(x["funding_sum"]) for x in v1[-20:] if x["funding_sum"] != ""]
+    if len(fund) == 20 and sum(fund) / 20 < FUND_MIN:
+        why.append(f"funding moyen du short {sum(fund) / 20 * 1e4:+.0f} pb sur les 20 derniers trades")
+    if value is not None and value < FLOOR_USD:
+        why.append(f"compte a {value:.2f} $, sous le plancher de {FLOOR_USD:.0f} $")
+    return why
+
+
+def done_qty(x, size):
+    """Element de r_legs_out [coin, prix] (ancien format : vendu en entier) ou [coin, prix moyen, quantite] -> quantite deja vendue."""
+    return float(x[2]) if len(x) > 2 else size
+
+
+def expected(journal, mode="reel"):
+    """Positions que le compte DOIT porter d'apres le journal, pour les lignes du mode donne : {coin: taille signee}. Short tant qu'il n'est pas
+    entierement rachete, lignes tant qu'elles ne sont pas entierement vendues."""
     want = {}
     for j in journal:
-        if j["r_size"] == "" or j["r_net_usd"] != "":
+        if j["r_size"] == "" or j["r_net_usd"] != "" or j["real"] != mode:
             continue
         if j["r_px_out"] == "":
-            want[j["coin"]] = want.get(j["coin"], 0.0) - float(j["r_size"])
-        sold = {c for c, _ in json.loads(j["r_legs_out"] or "[]")}
+            want[j["coin"]] = want.get(j["coin"], 0.0) - float(j["r_size"]) + json.loads(j["r_out"] or "[0, 0]")[0]
+        sold = {x[0]: x for x in json.loads(j["r_legs_out"] or "[]")}
         for c, z, _ in json.loads(j["r_legs"] or "[]"):
-            if c not in sold:
-                want[c] = want.get(c, 0.0) + z
+            left = z - (done_qty(sold[c], z) if c in sold else 0.0)
+            if left > 1e-12:
+                want[c] = want.get(c, 0.0) + left
     return {c: z for c, z in want.items() if abs(z) > 1e-12}
+
+
+def price(ctx, c, default):
+    """Prix de reference d'un perp Hyperliquid, ou `default` s'il n'est plus dans l'univers (radie)."""
+    x = ctx.get(c) or {}
+    return float(x.get("midPx") or x.get("markPx") or default)
 
 
 # ---------------------------------------------------------------- reseau (API publiques)
@@ -301,19 +362,24 @@ def real_enter(j, snap, ctx, broker, journal, alerts):
     if sum(x["r_size"] != "" and x["r_net_usd"] == "" for x in journal if x is not j) >= MAX_REAL:
         j["r_note"] = f"deja {MAX_REAL} positions : pas d'entree"
         return
-    if coin in expected(journal) or (broker.live and coin in broker.state()[1]):
+    if coin in expected(journal, mode) or (broker.live and coin in broker.state()[1]):
         j["r_note"] = "ce perp est deja en portefeuille (position ou ligne de couverture) : pas d'entree"      # Hyperliquid compense les positions d'un meme coin
         alerts.append(f"ENTREE {mode.upper()} ECARTEE {coin} : perp deja en portefeuille")
         return
     try:
-        value, _, used = broker.state()
-        t = int(j["t_ann"])
-        rets = [math.log(float(c["c"]) / float(c["o"])) for c in candles("hl", coin, t - 3 * 86400, t) if t - 3 * 86400 <= c["t"] // 1000 < t]
-        vol = (statistics.stdev(rets) if len(rets) > 1 else 0.0) * 288 ** 0.5 or VOL_REF        # vol journaliere sur les 3 j avant l'annonce, comme le backtest
-        usd = min(F * value * min(1.0, VOL_REF / vol), (MAX_MARGIN * value - used) / (1 / LEV_SHORT + 1 / LEV_HEDGE))
-        j["r_note"] = f"taille {usd:.0f} $ = {F:.0%} x {value:.0f} $ x min(1, {VOL_REF:.0%} / vol {vol:.1%}), marge deja bloquee {used:.0f} $"
+        value, have, used = broker.state()
+        if j["vol3d"] == "":
+            t = int(j["t_ann"])
+            j["vol3d"] = round(vol3d(candles("hl", coin, t - 3 * 86400, t), t) or VOL_REF, 5)
+        vol = float(j["vol3d"])
+        short_open = sum(-z * price(ctx, c, 0.0) for c, z in have.items() if z < 0)
+        caps = {"taille cible": F * value * min(1.0, VOL_REF / vol), "marge": (MAX_MARGIN * value - used) / (1 / LEV_SHORT + 1 / LEV_HEDGE),
+                "plafond d'exposition": MAX_SHORT * value - short_open}
+        usd = min(caps.values())
+        j["r_note"] = (f"taille {usd:.0f} $ = {F:.0%} x {value:.0f} $ x min(1, {VOL_REF:.0%} / vol {vol:.1%}), marge deja bloquee {used:.0f} $, "
+                       f"short deja ouvert {short_open:.0f} $ (limite : {min(caps, key=caps.get)})")
         if usd < MIN_LEG:
-            j["r_note"] += " : marge insuffisante, pas d'entree"
+            j["r_note"] += " : marge ou plafond d'exposition atteint, pas d'entree"
             alerts.append(f"ENTREE {mode.upper()} ECARTEE {coin} : {j['r_note']}")
             return
         broker.leverage(coin, LEV_SHORT)
@@ -351,21 +417,43 @@ def real_enter(j, snap, ctx, broker, journal, alerts):
 
 
 def real_exit(j, ctx, broker, positions, alerts):
-    """Rachat du short puis vente des lignes, etape par etape : chaque etape reussie est ecrite, un nouvel essai ne refait jamais une etape deja faite."""
+    """Rachat du short puis vente des lignes. Chaque quantite executee est ecrite aussitot : une execution partielle (IOC plafonne a 1 %) laisse le reste
+    au passage suivant, sans jamais racheter ni vendre deux fois. Le stop de l'exchange n'est annule qu'une fois le short entierement rachete."""
     coin, size, px_in = j["coin"], float(j["r_size"]), float(j["r_px_in"])
+    if (j["real"] == "reel") != broker.live:                       # HL_LIVE a change avec des positions ouvertes : ni sortie simulee d'une position reelle,
+        alerts.append(f"SORTIE {j['real'].upper()} {coin} EN ATTENTE : courtier en mode {'reel' if broker.live else 'simulation'}")    # ni ordre reel pour une simulee
+        return
     try:
         if j["r_px_out"] == "":
-            if broker.live and coin not in positions:
-                j |= {"r_px_out": px_in * (1 + STOP) * 1.005, "r_note": "rachete par le stop de l'exchange (prix estime)"}
+            done = json.loads(j["r_out"] or "[0, 0]")
+            stop_px = px_in * (1 + STOP) * 1.005
+            complete = done[0] >= size - 1e-9                       # tout rachete a un passage precedent (puis echec avant l'ecriture du prix)
+            if not complete and broker.live and coin not in positions:      # le stop de l'exchange a rachete (le reste)
+                j |= {"r_px_out": (done[0] * done[1] + (size - done[0]) * stop_px) / size, "r_note": "rachete par le stop de l'exchange (prix estime)"}
             else:
+                left = 0.0 if complete else -positions.get(coin, 0.0) if broker.live else size - done[0]
+                if left > 1e-12:
+                    filled, px = broker.market(coin, "buy", round(left, 10), book_snapshot("hl", coin)["ask"], reduce=True)
+                    done = [done[0] + filled, (done[0] * done[1] + filled * px) / (done[0] + filled)]
+                    j["r_out"] = json.dumps(done)
+                    if filled < left - 1e-9:
+                        raise RuntimeError(f"rachat partiel ({done[0]:g} sur {size:g}) : stop maintenu, suite au prochain passage")
                 broker.cancel_all(coin)
-                j["r_px_out"] = broker.market(coin, "buy", size, book_snapshot("hl", coin)["ask"], reduce=True)[1]
-        sold = json.loads(j["r_legs_out"] or "[]")
-        for c, lsize, _ in json.loads(j["r_legs"] or "[]"):
-            if c not in {x[0] for x in sold}:
-                sold.append([c, broker.market(c, "sell", lsize, float(ctx[c]["midPx"] or ctx[c]["markPx"]), reduce=True)[1]])
-                j["r_legs_out"] = json.dumps(sold)
-        px_out, out, t_in, t_out = float(j["r_px_out"]), dict(sold), int(j["t_in"]), int(j["t_out"])
+                j["r_px_out"] = done[1]
+        sold = {x[0]: x for x in json.loads(j["r_legs_out"] or "[]")}
+        for c, lsize, lpx in json.loads(j["r_legs"] or "[]"):
+            q0 = done_qty(sold[c], lsize) if c in sold else 0.0
+            if lsize - q0 <= 1e-12:
+                continue
+            if broker.live and c not in positions:                 # plus aucune position sur ce coin (radie, liquide) : rien a vendre, prix estime
+                sold[c] = [c, price(ctx, c, lpx), lsize]
+            else:
+                filled, px = broker.market(c, "sell", round(lsize - q0, 10), price(ctx, c, lpx), reduce=True)
+                sold[c] = [c, ((sold[c][1] * q0 if c in sold else 0.0) + px * filled) / (q0 + filled), q0 + filled]
+            j["r_legs_out"] = json.dumps(list(sold.values()))
+            if done_qty(sold[c], lsize) < lsize - 1e-9:
+                raise RuntimeError(f"vente partielle de {c} ({done_qty(sold[c], lsize):g} sur {lsize:g}), suite au prochain passage")
+        px_out, out, t_in, t_out = float(j["r_px_out"]), {c: float(x[1]) for c, x in sold.items()}, int(j["t_in"]), int(j["t_out"])
         usd = size * (px_in - px_out) - TAKER["hl"] * size * (px_in + px_out) + size * px_in * funding_sum("hl", coin, t_in, t_out)
         for c, lsize, lpx in json.loads(j["r_legs"] or "[]"):
             usd += lsize * (out[c] - lpx) - TAKER["hl"] * lsize * (out[c] + lpx) - lsize * lpx * funding_sum("hl", c, t_in, t_out)
@@ -399,7 +487,12 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None):
         elif now > entry + LATE_S:
             j |= {"status": "ineligible", "note": "annonce vue trop tard"}
         else:
-            ok, why = eligible(candles(exch, coin, t - 3 * 86400, t), t)
+            try:
+                cs = candles(exch, coin, t - 3 * 86400, t)
+                ok, why = eligible(cs, t)
+                j["vol3d"] = round(vol3d(cs, t) or 0.0, 5) or ""
+            except Exception as e:                                  # reseau : le signal est garde, l'eligibilite sera verifiee a l'entree
+                ok, why = True, f"eligibilite a verifier a l'entree ({type(e).__name__})"
             j |= {"status": "signal" if ok else "ineligible", "note": why}
             j["note"] = why or ("listing de perp : suivi fictif seulement (spec 18)" if perp else "")
             busy |= {(perp, tick)} if ok else set()
@@ -412,17 +505,30 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None):
             j |= {"status": "entree manquee", "note": f"passage en retard de plus de {LATE_S // 3600} h"}
             alerts.append(f"ENTREE MANQUEE {j['coin']}")
             continue
-        s = book_snapshot(j["exch"], j["coin"])
-        shorted = {x["coin"] for x in journal if x["exch"] == "hl" and x["status"] in ("signal", "ouvert")} | {hl_coin(j["ticker"], ctx)}
-        legs = sorted((c for c in ctx if c != "BTC" and c not in shorted), key=lambda c: -float(ctx[c].get("dayNtlVlm") or 0))[:HEDGE_N]
-        px = s["sell"][0] or s["bid"]
-        slip = [None if p is None else (s["mid"] - p) / s["mid"] * 1e4 for p in s["sell"]]
-        vol = float(ctx[j["coin"]].get("dayNtlVlm") or 0) / 1e6 if j["exch"] == "hl" else ""
-        # exit_ts est recalcule ici : la tenue de 5 jours part de l'entree REELLE, comme dans le backtest, meme si le passage horaire est en retard
-        j |= {"status": "ouvert", "t_in": now, "exit_ts": now + HOLD_S, "bid": s["bid"], "ask": s["ask"], "spread_bp": round(s["spread_bp"], 2), "px_in": px,
-              "slip_1k_bp": "" if slip[0] is None else round(slip[0], 2), "slip_5k_bp": "" if slip[1] is None else round(slip[1], 2),
-              "funding_in": ctx[j["coin"]].get("funding", "") if j["exch"] == "hl" else "", "day_vol_musd": "" if vol == "" else round(vol, 2),
-              "legs": json.dumps(legs), "legs_px_in": json.dumps([float(ctx[c]["midPx"] or ctx[c]["markPx"]) for c in legs])}
+        try:                                                        # une ligne en erreur (coin radie, API) ne bloque jamais les autres
+            if j["note"].startswith("eligibilite a verifier"):
+                t = int(j["t_ann"])
+                cs = candles(j["exch"], j["coin"], t - 3 * 86400, t)
+                ok, why = eligible(cs, t)
+                j |= {"note": why, "vol3d": round(vol3d(cs, t) or 0.0, 5) or ""}
+                if not ok:
+                    j["status"] = "ineligible"
+                    alerts.append(f"SIGNAL ECARTE A L'ENTREE {j['coin']} : {why}")
+                    continue
+            s = book_snapshot(j["exch"], j["coin"])
+            shorted = {x["coin"] for x in journal if x["exch"] == "hl" and x["status"] in ("signal", "ouvert")} | {hl_coin(j["ticker"], ctx)}
+            legs = [c for c in HEDGE if c in ctx and c not in shorted]
+            px = s["sell"][0] or s["bid"]
+            slip = [None if p is None else (s["mid"] - p) / s["mid"] * 1e4 for p in s["sell"]]
+            vol = float(ctx[j["coin"]].get("dayNtlVlm") or 0) / 1e6 if j["exch"] == "hl" else ""
+            # exit_ts est recalcule ici : la tenue de 5 jours part de l'entree REELLE, comme dans le backtest, meme si le passage horaire est en retard
+            j |= {"status": "ouvert", "t_in": now, "exit_ts": now + HOLD_S, "bid": s["bid"], "ask": s["ask"], "spread_bp": round(s["spread_bp"], 2), "px_in": px,
+                  "slip_1k_bp": "" if slip[0] is None else round(slip[0], 2), "slip_5k_bp": "" if slip[1] is None else round(slip[1], 2),
+                  "funding_in": ctx[j["coin"]].get("funding", "") if j["exch"] == "hl" else "", "day_vol_musd": "" if vol == "" else round(vol, 2),
+                  "legs": json.dumps(legs), "legs_px_in": json.dumps([price(ctx, c, 0.0) for c in legs])}
+        except Exception as e:
+            alerts.append(f"ENTREE REPORTEE {j['exch']}:{j['coin']} ({type(e).__name__} : {e}) -> nouvel essai au prochain passage")
+            continue
         alerts.append(f"ENTREE FICTIVE short {j['exch']}:{j['coin']} a {px} (spread {s['spread_bp']:.1f} pb, glissement 1 k$ {j['slip_1k_bp']} pb, 5 k$ {j['slip_5k_bp']} pb)")
         if broker and j["exch"] == "hl" and not fam(j):               # un listing de perp n'est PAS la regle v1 : aucun ordre reel, quel que soit HL_LIVE
             real_enter(j, s, ctx, broker, journal, alerts)
@@ -432,43 +538,47 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None):
         px_in, t_in = float(j["px_in"]), int(j["t_in"])
         if t_in >= now:                                             # ouverte a CE passage : rien n'a pu se passer, et `positions` (lu avant l'entree) ne la connait pas
             continue
-        held = live and j["r_size"] != ""                           # position reelle ouverte a un passage precedent : `positions` la connait forcement
-        if held and j["r_stop"] == "" and j["coin"] in positions:   # stop absent (pose en echec) : on le repose
-            try:
-                j["r_stop"] = broker.stop(j["coin"], float(j["r_size"]), float(j["r_px_in"]) * (1 + STOP))
-                alerts.append(f"STOP REPOSE sur {j['coin']}")
-            except Exception as e:
-                alerts.append(f"URGENT : STOP TOUJOURS ABSENT sur {j['coin']} ({e})")
-        hit = next((c for c in candles(j["exch"], j["coin"], t_in, now) if float(c["h"]) >= px_in * (1 + STOP)), None)
-        gone = held and j["coin"] not in positions                  # le stop de l'exchange a rachete : la couverture ne doit pas rester seule
-        if hit is None and not gone and now < int(j["exit_ts"]):
+        held = live and j["real"] == "reel"                         # position reelle ouverte a un passage precedent : `positions` la connait forcement
+        try:
+            if held and j["r_stop"] == "" and j["coin"] in positions:   # stop absent (pose en echec) : on le repose
+                try:
+                    j["r_stop"] = broker.stop(j["coin"], float(j["r_size"]), float(j["r_px_in"]) * (1 + STOP))
+                    alerts.append(f"STOP REPOSE sur {j['coin']}")
+                except Exception as e:
+                    alerts.append(f"URGENT : STOP TOUJOURS ABSENT sur {j['coin']} ({e})")
+            hit = next((c for c in candles(j["exch"], j["coin"], t_in, now) if float(c["h"]) >= px_in * (1 + STOP)), None)
+            gone = held and j["coin"] not in positions              # le stop de l'exchange a rachete : la couverture ne doit pas rester seule
+            if hit is None and not gone and now < int(j["exit_ts"]):
+                continue
+            if hit is None and gone:
+                t_out, px_out, status = now, px_in * (1 + STOP) * 1.005, "stoppe"
+            elif hit:
+                t_out, px_out, status = hit["T"] // 1000, max(float(hit["o"]), px_in * (1 + STOP)) * 1.005, "stoppe"
+            else:
+                s = book_snapshot(j["exch"], j["coin"])
+                t_out, px_out, status = now, s["buy"][0] or s["ask"], "clos"
+            legs, legs_in = json.loads(j["legs"]), json.loads(j["legs_px_in"])
+            legs_out = []
+            for c, p_in in zip(legs, legs_in):
+                cs = candles("hl", c, t_out - 3600, t_out)
+                legs_out.append(float(cs[-1]["c"]) if cs else price(ctx, c, p_in))
+            f_short = funding_sum(j["exch"], j["coin"], t_in, t_out)
+            f_legs = sum(funding_sum("hl", c, t_in, t_out) for c in legs) / len(legs) if legs else 0.0
+        except Exception as e:
+            alerts.append(f"SORTIE FICTIVE REPORTEE {j['exch']}:{j['coin']} ({type(e).__name__} : {e}) -> nouvel essai au prochain passage")
             continue
-        if hit is None and gone:
-            t_out, px_out, status = now, px_in * (1 + STOP) * 1.005, "stoppe"
-        elif hit:
-            t_out, px_out, status = hit["T"] // 1000, max(float(hit["o"]), px_in * (1 + STOP)) * 1.005, "stoppe"
-        else:
-            s = book_snapshot(j["exch"], j["coin"])
-            t_out, px_out, status = now, s["buy"][0] or s["ask"], "clos"
-        legs, legs_in = json.loads(j["legs"]), json.loads(j["legs_px_in"])
-        legs_out = []
-        for c in legs:
-            cs = candles("hl", c, t_out - 3600, t_out)
-            legs_out.append(float(cs[-1]["c"]) if cs else float(ctx[c]["midPx"] or ctx[c]["markPx"]))
-        f_short = funding_sum(j["exch"], j["coin"], t_in, t_out)
-        f_legs = sum(funding_sum("hl", c, t_in, t_out) for c in legs) / len(legs) if legs else 0.0
         short, hedge, total = paper_pnl(px_in, px_out, f_short, legs_in, legs_out, f_legs, TAKER[j["exch"]])
         j |= {"status": status, "t_out": t_out, "px_out": px_out, "funding_sum": round(f_short, 6), "legs_px_out": json.dumps(legs_out), "legs_funding": round(f_legs, 6),
               "short_net": round(short, 5), "hedge_net": round(hedge, 5), "net_hedged": round(total, 5)}
-        n, S, verdict = sprt([float(x["net_hedged"]) for x in journal if x["net_hedged"] != ""])
+        n, S, verdict = sprt([weight(x) * float(x["net_hedged"]) for x in v1_closed(journal)])
         alerts.append(f"SORTIE FICTIVE ({status}) {j['exch']}:{j['coin']} : short {short * 1e4:+.0f} pb, couverture {hedge * 1e4:+.0f} pb, total {total * 1e4:+.0f} pb | "
-                      f"test sequentiel : n {n}, S {S:+.3f}, bornes [{SPRT_DRIFT * n - SPRT_BOUND:+.2f} ; {SPRT_DRIFT * n + SPRT_BOUND:+.2f}] -> {verdict}")
+                      f"test sequentiel (v1, pondere) : n {n}, S {S:+.3f}, bornes [{SPRT_DRIFT * n - SPRT_BOUND:+.2f} ; {SPRT_DRIFT * n + SPRT_BOUND:+.2f}] -> {verdict}")
     if broker:
         for j in journal:                                           # 4. sorties du pilote, y compris celles restees incompletes a un passage precedent
             if j["r_size"] != "" and j["r_net_usd"] == "" and j["status"] in ("clos", "stoppe"):
                 real_exit(j, ctx, broker, positions, alerts)
         if live:                                                    # 5. rapprochement, sur l'etat du compte APRES les ordres de ce passage
-            want, have = expected(journal), broker.state()[1]
+            want, have = expected(journal, "reel"), broker.state()[1]
             bad = [c for c in set(want) | set(have) if abs(want.get(c, 0.0) - have.get(c, 0.0)) > 0.02 * max(abs(want.get(c, 0.0)), abs(have.get(c, 0.0)))]
             if bad:
                 alerts.append(f"ECART ENTRE LE JOURNAL ET LE COMPTE sur {sorted(bad)} : a verifier a la main")
@@ -499,15 +609,23 @@ def main():
         step(now, journal, [] if first_run else fresh, alerts, ctx, aster_syms, broker)     # premier passage : on amorce l'etat sans rejouer la semaine ecoulee
     except Exception as e:                                                      # le journal est modifie en place : ce qui a ete fait (ordres compris) est ecrit quand meme
         alerts.append(f"PASSAGE INTERROMPU ({type(e).__name__}) : etat sauvegarde, reprise au prochain passage")
+    write("announcements.csv", A_COLS, [dict(zip(A_COLS, r)) for r in merged])      # d'abord l'etat : plus rien apres ne doit pouvoir le perdre
+    write("journal.csv", J_COLS, journal)
+    value = None
     if broker:
-        LIVE.mkdir(exist_ok=True)
-        with open(LIVE / "equity.csv", "a", encoding="utf-8") as f:
-            f.write(f"{now},{broker.state()[0]:.2f},{'reel' if broker.live else 'simulation'}\n")
+        try:
+            value = broker.state()[0]
+            with open(LIVE / "equity.csv", "a", encoding="utf-8") as f:
+                f.write(f"{now},{value:.2f},{'reel' if broker.live else 'simulation'}\n")
+        except Exception as e:
+            alerts.append(f"VALEUR DU COMPTE ILLISIBLE ({type(e).__name__}) : courbe et plancher non controles a ce passage")
         days = getattr(broker, "days_left", None)
         if days is not None and days < KEY_WARN_DAYS and time.gmtime(now).tm_hour == 0:     # une fois par jour : sans cle valide, plus d'entree NI de sortie
             alerts.append(f"LA CLE D'AGENT EXPIRE DANS {days:.0f} JOURS : a renouveler (secrets HL_AGENT_KEY)")
-    write("announcements.csv", A_COLS, [dict(zip(A_COLS, r)) for r in merged])
-    write("journal.csv", J_COLS, journal)
+    why = hard_stops(journal, value if broker and broker.live else None)
+    if why and not (LIVE / "STOP").exists():
+        (LIVE / "STOP").write_text(f"arret dur du {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(now))} : " + " ; ".join(why) + "\n", encoding="utf-8")
+        alerts.append("ARRET DUR DECLENCHE : " + " ; ".join(why) + " -> plus aucune entree reelle (les sorties continuent) ; supprimer live/STOP pour reprendre")
     (LIVE / "alerts.txt").write_text("\n".join(alerts), encoding="utf-8")
     print(f"{time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(now))} | annonces connues {len(merged)} (+{len(fresh)}) | journal {len(journal)} lignes | "
           f"ouverts {sum(j['status'] == 'ouvert' for j in journal)} | signaux en attente {sum(j['status'] == 'signal' for j in journal)} | "
@@ -532,7 +650,17 @@ def _selftest():
     assert exec_price(bids, 500) == 100 and abs(exec_price(bids, 995) - 995 / (5 + 5)) < 1e-9 and exec_price(bids, 5000) is None
     s, h, tot = paper_pnl(100, 90, 0.002, [10, 20], [11, 20], 0.001)
     assert abs(s - (0.10 - TAKER["hl"] * 1.9 + 0.002)) < 1e-12 and abs(h - (0.05 - 0.001 - 2 * TAKER["hl"])) < 1e-12 and abs(tot - s - h) < 1e-12
-    assert sprt([0.05] * 10)[2] == "en cours" and sprt([0.05] * 70)[2] == "VALIDE" and sprt([-0.03] * 40)[2] == "ARRET"
+    assert sprt([0.05] * 10)[2] == "en cours" and sprt([0.05] * 40)[::2] == (33, "VALIDE") and sprt([-0.03] * 40)[::2] == (35, "ARRET")
+    assert sprt([-1.4, 3.0, 3.0])[2] == "ARRET"                                                   # le premier franchissement est definitif
+    assert sprt([0.01] * SPRT_NMAX)[2] == "VALIDE" and sprt([0.005] * SPRT_NMAX)[2] == "ARRET" and sprt([0.01] * (SPRT_NMAX - 1))[2] == "en cours"
+    assert weight({"vol3d": "0.16"}) == 0.5 and weight({"vol3d": ""}) == 1.0 and weight({"vol3d": "0.04"}) == 1.0
+
+    def closed(i, status="clos", net=0.0, fund=0.0, market=""):
+        return {c: "" for c in J_COLS} | {"t_out": i, "status": status, "net_hedged": net, "funding_sum": fund, "market": market}
+    base = [closed(i) for i in range(26)] + [closed(26 + i, "stoppe") for i in range(4)]
+    assert hard_stops(base) == [] and "5 stops" in hard_stops(base[1:] + [closed(99, "stoppe")])[0]
+    assert hard_stops(base + [closed(100, "stoppe", -0.9, market="perp")]) == []               # la famille perp n'entre ni dans le test ni dans les arrets
+    assert "funding" in hard_stops([closed(i, fund=-0.03) for i in range(20)])[0] and "plancher" in hard_stops(base, 99.0)[0]
     journal, alerts = [], []                                                                      # machine a etats, sans reseau
     step(t, journal, [{"ts": t - 3600, "venue": "upbit", "ticker": "ZAMA"}], alerts, uni, {"XYZ": "XYZUSDT"})
     assert journal[0]["status"] == "ineligible" and "Aster" in journal[0]["note"]
@@ -541,14 +669,14 @@ def _selftest():
 
     class Fake:                                                                                   # courtier sans reseau : tient ses positions, enregistre les ordres
         def __init__(self, live):
-            self.live, self.sent, self.pos, self.fail = live, [], {}, set()
-        used, lev = 0.0, {}
+            self.live, self.sent, self.pos, self.fail, self.part, self.lev, self.used, self.cancels = live, [], {}, set(), {}, {}, 0.0, 0
         def state(self): return 150.0, dict(self.pos), self.used
         def size_for(self, coin, usd, px): return round(usd / px, 4)
         def leverage(self, coin, lev): self.lev[coin] = lev
         def market(self, coin, side, size, ref, reduce=False):
             if (coin, side) in self.fail:
                 raise RuntimeError("refus simule")
+            size = round(size * self.part.pop((coin, side), 1.0), 10)                             # execution partielle simulee, une seule fois
             self.sent.append((coin, side, size, reduce))
             self.pos[coin] = round(self.pos.get(coin, 0.0) + (size if side == "buy" else -size), 10)
             self.pos = {c: z for c, z in self.pos.items() if z}
@@ -557,8 +685,9 @@ def _selftest():
             if ("stop", coin) in self.fail:
                 raise RuntimeError("stop refuse")
             return f"stop@{trigger:.2f}"
-        def cancel_all(self, coin): pass
+        def cancel_all(self, coin): self.cancels += 1
     ctx2 = {"BTC": {"midPx": "90000", "dayNtlVlm": "9e9"}, "ETH": {"midPx": "2000", "dayNtlVlm": "5e9"}, "SOL": {"midPx": "100", "dayNtlVlm": "4e9"},
+            "DOGE": {"midPx": "0.2", "dayNtlVlm": "1e9"}, "BNB": {"midPx": "600", "dayNtlVlm": "1e9"},
             "HYPE": {"midPx": "50", "dayNtlVlm": "3e9"}, "SUI": {"midPx": "1", "dayNtlVlm": "1e8", "funding": "0"}, "XRP": {"midPx": "2", "dayNtlVlm": "2e9"}}
     book_snapshot = lambda exch, coin: {"bid": 1.0, "ask": 1.001, "mid": 1.0005, "spread_bp": 10.0, "sell": [1.0, 0.999], "buy": [1.001, 1.002]}
     candles = lambda exch, coin, a, b: [{"t": a * 1000, "T": b * 1000, "o": "1", "h": "1.01", "c": "1"}]
@@ -569,14 +698,14 @@ def _selftest():
     step(t + 60, jr, [], al, ctx2, {}, b)
     assert sig["status"] == "ouvert" and sig["r_size"] == 75.0 and sig["r_net_usd"] == "" and b.pos["SUI"] == -75.0, (sig["status"], al)     # REGRESSION : ouverte a ce passage, pas refermee aussitot
     legs = json.loads(sig["r_legs"])                                                              # 50 % de 150 $ (une seule bougie : vol inconnue, pas de reduction), 4 lignes de ~18,75 $
-    assert [c for c, _, _ in legs] == ["ETH", "SOL", "HYPE", "XRP"] and abs(sum(z * p for _, z, p in legs) - 75) < 0.5 and "SUI" not in json.loads(sig["legs"])
-    assert b.lev == {"SUI": 3, "ETH": 10, "SOL": 10, "HYPE": 10, "XRP": 10} and expected(jr) == b.pos and not [x for x in al if "ECART" in x]
+    assert json.loads(sig["legs"]) == list(HEDGE) and [c for c, _, _ in legs] == list(HEDGE) and abs(sum(z * p for _, z, p in legs) - 75) < 0.5     # panier fixe, pas HYPE
+    assert b.lev == {"SUI": 3, "ETH": 10, "SOL": 10, "DOGE": 10, "BNB": 10} and expected(jr) == b.pos and not [x for x in al if "ECART" in x]
     step(t + 3660, jr, [], al, ctx2, {}, b)
     assert sig["status"] == "ouvert"                                                              # passage suivant : la position est sur le compte, rien ne bouge
-    b.fail = {("XRP", "sell")}                                                                    # sortie : la derniere ligne refuse de se vendre
+    b.fail = {("BNB", "sell")}                                                                    # sortie : la derniere ligne refuse de se vendre
     step(t + HOLD_S + 60, jr, [], al, ctx2, {}, b)
     n_buy = sum(x[:2] == ("SUI", "buy") for x in b.sent)
-    assert sig["status"] == "clos" and sig["r_px_out"] != "" and sig["r_net_usd"] == "" and n_buy == 1 and b.pos == {"XRP": json.loads(sig["r_legs"])[3][1]}
+    assert sig["status"] == "clos" and sig["r_px_out"] != "" and sig["r_net_usd"] == "" and n_buy == 1 and b.pos == {"BNB": json.loads(sig["r_legs"])[3][1]} and b.cancels == 1
     b.fail = set()
     step(t + HOLD_S + 3660, jr, [], al, ctx2, {}, b)                                              # nouvel essai : ne rachete PAS le short une 2e fois, ne revend PAS ETH
     assert sig["r_net_usd"] != "" and sum(x[:2] == ("SUI", "buy") for x in b.sent) == 1 and sum(x[:2] == ("ETH", "sell") for x in b.sent) == 1 and b.pos == {} and expected(jr) == {}
@@ -599,22 +728,57 @@ def _selftest():
     step(t + 120, jp, [{"ts": t - 3600, "venue": "binance", "market": "spot", "ticker": "SUI"}], [], ctx2, {}, b3)
     assert jp[1]["note"] != "deja un signal ou une position sur ce coin" and jp[1]["market"] == "spot"
     eth = {c: "" for c in J_COLS} | {"id": "e", "ticker": "ETH", "exch": "hl", "coin": "ETH", "status": "ouvert", "legs": "[]", "r_note": ""}
-    real_enter(eth, {"bid": 2000.0}, ctx2, Fake(live=False), [dict(sig) | {"r_net_usd": "", "r_px_out": "", "r_legs": json.dumps([["ETH", 0.0055, 2000]]), "r_legs_out": ""}, eth], [])
+    real_enter(eth, {"bid": 2000.0}, ctx2, Fake(live=True), [dict(sig) | {"r_net_usd": "", "r_px_out": "", "r_legs": json.dumps([["ETH", 0.0055, 2000]]), "r_legs_out": ""}, eth], [])
     assert eth["r_size"] == "" and "deja en portefeuille" in eth["r_note"]                        # ETH sert de couverture ailleurs : pas de short reel dessus
     x = 0.16 / 288 ** 0.5                                                                         # vol journaliere 16 % : taille divisee par 2
     candles = lambda exch, coin, a, b: [{"t": (a + 300 * i) * 1000, "o": "1", "c": str(math.exp(x if i % 2 else -x))} for i in range(864)]
     def enter(used):
         f = Fake(live=True)
         f.used = used
-        jj = dict(sig) | {c: "" for c in R_COLS} | {"legs": json.dumps(["ETH", "SOL", "HYPE", "XRP"])}
+        jj = dict(sig) | {c: "" for c in R_COLS} | {"legs": json.dumps(["ETH", "SOL", "HYPE", "XRP"]), "vol3d": ""}
         real_enter(jj, {"bid": 1.0}, ctx2, f, [jj], [])
         return jj
     assert abs(enter(0.0)["r_size"] - 37.5) < 0.1
     assert abs(enter(95.0)["r_size"] - 10 / (1 / LEV_SHORT + 1 / LEV_HEDGE)) < 0.01             # marge : 70 % x 150 - 95 = 10 $ libres -> ~23 $ de short au plus
     low = enter(101.0)
-    assert low["r_size"] == "" and "marge insuffisante" in low["r_note"]
+    assert low["r_size"] == "" and "limite : marge" in low["r_note"] and "pas d'entree" in low["r_note"]
     one = json.loads(enter(97.0)["r_legs"])                                                       # ~18 $ : une seule ligne, au notionnel du short
     assert len(one) == 1 and abs(one[0][1] * one[0][2] - 8 / (1 / LEV_SHORT + 1 / LEV_HEDGE)) < 1
+    assert abs(vol3d(candles("hl", "Z", t - 3 * 86400, t), t) - 0.16) < 0.001
+    capped = Fake(live=True)                                                                      # plafond d'exposition : 140 $ deja shortes sur 150 $
+    capped.pos = {"ZZZ": -140.0}
+    jc = dict(sig) | {c: "" for c in R_COLS} | {"legs": json.dumps(["ETH"]), "vol3d": ""}
+    real_enter(jc, {"bid": 1.0}, ctx2 | {"ZZZ": {"midPx": "1"}}, capped, [jc], [])
+    assert jc["r_size"] == "" and "limite : plafond d'exposition" in jc["r_note"] and capped.sent == []
+    candles = lambda exch, coin, a, b: [{"t": a * 1000, "T": b * 1000, "o": "1", "h": "1.01", "c": "1"}]
+    b4 = Fake(live=True)                                                                          # executions partielles a la sortie
+    s4 = dict(sig) | {c: "" for c in R_COLS} | {"status": "signal", "t_in": "", "net_hedged": "", "vol3d": ""}
+    j4 = [s4]
+    step(t + 60, j4, [], [], ctx2, {}, b4)
+    lsz = {c: z for c, z, _ in json.loads(s4["r_legs"])}
+    b4.part = {("SUI", "buy"): 0.4, ("ETH", "sell"): 0.5}
+    a4 = []
+    step(t + HOLD_S + 60, j4, [], a4, ctx2, {}, b4)
+    assert s4["r_px_out"] == "" and b4.cancels == 0 and b4.pos["SUI"] == -45.0 and expected(j4) == b4.pos and not [x for x in a4 if "ECART" in x]    # le stop reste
+    step(t + HOLD_S + 3660, j4, [], [], ctx2, {}, b4)
+    assert s4["r_px_out"] != "" and b4.cancels == 1 and s4["r_net_usd"] == "" and abs(b4.pos["ETH"] - lsz["ETH"] / 2) < 1e-9 and expected(j4) == b4.pos
+    step(t + HOLD_S + 7260, j4, [], [], ctx2, {}, b4)
+    assert s4["r_net_usd"] != "" and b4.pos == {} and abs(sum(z for c, sd, z, _ in b4.sent if (c, sd) == ("ETH", "sell")) - lsz["ETH"]) < 1e-9
+    assert sum(z for c, sd, z, _ in b4.sent if (c, sd) == ("SUI", "buy")) == 75.0                 # jamais rachete deux fois
+    b5, a5 = Fake(live=False), []                                                                 # HL_LIVE repasse a 0 avec une position reelle ouverte
+    real_exit(dict(s4) | {"r_px_out": "", "r_net_usd": "", "r_legs_out": "", "r_out": "", "real": "reel"}, ctx2, b5, {}, a5)
+    assert b5.sent == [] and "EN ATTENTE" in a5[0]
+
+    def candles_gone(exch, coin, a, b):
+        if coin == "GONE":
+            raise RuntimeError("perp radie")
+        return [{"t": a * 1000, "T": b * 1000, "o": "1", "h": "1.01", "c": "1"}]
+    candles = candles_gone                                                                        # une ligne en erreur ne bloque pas les autres
+    row = lambda i, coin: {c: "" for c in J_COLS} | {"id": i, "ticker": coin, "exch": "hl", "coin": coin, "status": "ouvert", "t_ann": t - DELAY_S, "t_in": t,
+                                                     "px_in": 1.0, "legs": "[]", "legs_px_in": "[]", "exit_ts": t + 10}
+    jg, ag = [row("g", "GONE"), row("o", "SUI")], []
+    step(t + 100, jg, [], ag, ctx2, {}, None)
+    assert jg[0]["status"] == "ouvert" and jg[1]["status"] == "clos" and any("REPORTEE" in x for x in ag)
     print("self-check OK")
 
 
