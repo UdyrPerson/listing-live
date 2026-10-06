@@ -4,3 +4,4 @@
 2026-10-05  microcap-prereg-v0  9dd771516f1f3dee
 2026-10-05  microcap-baserate  92c8a05e699b656b
 2026-10-05  microcap-forward  acae6dd3d1ce3a91
+2026-10-06  microcap-forward  9770cd66eca9350b
