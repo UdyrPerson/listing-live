@@ -6,7 +6,8 @@
 Sans cle : journal FICTIF seul (API publiques, requests + listing_feed.py). Avec des cles, le meme journal porte aussi les ordres du pilote : colonnes
 r_*, sur Hyperliquid (listing_broker.py, HL_LIVE=1) et sur Aster (listing_broker_aster.py, ASTER_LIVE=1) ; sans la variable, simulation. Exchange d'un
 signal : Hyperliquid si le perp y existe (le moins cher), sinon Aster (research/execution-venues.md). Chaque exchange est un compte autonome : capital,
-marge, couverture (memes coins, sur le meme exchange), plafonds et rapprochement propres. Etat dans live/ (CSV versionnes par la tache) :
+marge, couverture (memes coins, sur le meme exchange), plafonds et rapprochement propres. Un signal dont le perp existe sur les deux est pris sur les
+deux (ligne jumelle) : cible F x w x somme des capitaux, repartie pour egaliser l'utilisation des comptes (allocate). Etat dans live/ (CSV versionnes) :
   announcements.csv  annonces retenues (memes analyseurs et meme dedoublonnage que le backtest)
   journal.csv        un signal par ligne : signal -> ouvert -> clos | stoppe, ou ineligible / entree manquee
   alerts.txt         ce qui s'est passe pendant CE passage (la tache en fait une issue)
@@ -52,6 +53,7 @@ MAX_MARGIN, MIN_LEG = 0.7, {"hl": 11, "aster": 6}   # marge initiale du compte <
 MAX_SHORT = 1.0                                # short total <= 1 x le capital : au-dela de ~1,25 x, un squeeze commun de +50 % liquiderait le compte AVANT les stops
 SPRT_DRIFT, SPRT_BOUND, SPRT_NMAX = 0.00828, 1.337, 264    # Wald H0 0 / H1 238 pb sur le resultat couvert PONDERE par la taille (w = min(1, VOL_REF / vol)),
                                                # sigma pondere 1 004 pb, erreurs 10 % / 10 % ; simule : arret a tort 12 % si 238 pb, validation a tort 11 % si 0, ~108 trades
+BALANCE_ALERT = 0.6                            # alerte quotidienne si un compte porte plus de 60 % du capital total : transfert manuel (les cles ne retirent rien)
 V11_FROM = 1791277200                          # 2026-10-06 09:00 UTC : la v1.1 (couverture, test) repart de zero (research/listing-strategy-v1.md)
 STOPS_MAX, FUND_MIN, FLOOR_USD = (5, 30), -0.02, 100.0     # arrets durs : >= 5 stops sur les 30 derniers trades, funding moyen < -200 pb sur 20, compte < 100 $
 MAX_NEW_MARKETS = 8                # plus de 8 marches neufs d'un coup = etat perdu, pas 8 listings : on reamorce sans emettre
@@ -60,7 +62,7 @@ A_COLS = ["ts", "venue", "market", "ticker", "n_tickers", "head", "source"]
 R_COLS = ["real", "r_size", "r_px_in", "r_stop", "r_legs", "r_px_out", "r_legs_out", "r_net_usd", "r_note", "r_out"]     # r_out : [quantite rachetee, prix moyen] du short
 J_COLS = ["id", "t_ann", "venue", "ticker", "exch", "coin", "status", "note", "entry_ts", "exit_ts", "t_in", "bid", "ask", "spread_bp", "px_in", "slip_1k_bp", "slip_5k_bp",
           "funding_in", "day_vol_musd", "legs", "legs_px_in", "t_out", "px_out", "funding_sum", "legs_px_out", "legs_funding", "short_net", "hedge_net", "net_hedged"] + R_COLS + [
-          "market", "vol3d"]                           # vol3d : vol journaliere des 3 j avant l'annonce (poids du test sequentiel)
+          "market", "vol3d", "twin"]                   # vol3d : vol journaliere des 3 j avant l'annonce ; twin : id de la ligne principale d'une ligne jumelle
 
 
 # ---------------------------------------------------------------- fonctions pures
@@ -141,7 +143,8 @@ def sprt(values):
 
 def v1_closed(journal, since=0):
     """Trades fictifs clos de la regle v1 (hors suivi des listings de perp, autre regle) entres depuis `since`, dans l'ordre des sorties."""
-    return sorted((x for x in journal if x["net_hedged"] != "" and x.get("market") != "perp" and int(x["t_in"] or 0) >= since), key=lambda x: int(x["t_out"]))
+    return sorted((x for x in journal if x["net_hedged"] != "" and x.get("market") != "perp" and not x.get("twin") and int(x["t_in"] or 0) >= since),
+                  key=lambda x: int(x["t_out"]))                    # une ligne jumelle (meme signal, autre exchange) n'est jamais comptee deux fois
 
 
 def sprt_v11(journal):
@@ -164,6 +167,27 @@ def hard_stops(journal, values=None):
         if v is not None and v < FLOOR_USD:
             why.append(f"compte {ex} a {v:.2f} $, sous le plancher de {FLOOR_USD:.0f} $")
     return why
+
+
+def allocate(target, accounts):
+    """Repartition d'un trade entre comptes. accounts = {exchange: (valeur E, short ouvert S, marge bloquee M, ordre minimum)} -> {exchange: montant en $}.
+    Egalise l'utilisation S / E (le compte le moins charge recoit le plus), sous les plafonds de chaque compte (short <= MAX_SHORT x E, marge <= MAX_MARGIN x E) ;
+    si la place manque, le trade est reduit ; une part non nulle sous l'ordre minimum est abandonnee et le reste reparti a nouveau."""
+    acc = dict(accounts)
+    while acc:
+        cap = {v: max(0.0, min(MAX_SHORT * E - S, (MAX_MARGIN * E - M) / (1 / LEV_SHORT + 1 / LEV_HEDGE))) for v, (E, S, M, _) in acc.items()}
+        goal = min(target, sum(cap.values()))
+        fill = lambda lam: {v: min(cap[v], max(0.0, lam * E - S)) for v, (E, S, _, _) in acc.items()}
+        lo, hi = 0.0, max((S + cap[v]) / E for v, (E, S, _, _) in acc.items()) + 1.0
+        for _ in range(100):                                        # niveau d'utilisation commun : la somme servie croit avec lui
+            mid = (lo + hi) / 2
+            lo, hi = (mid, hi) if sum(fill(mid).values()) < goal else (lo, mid)
+        x = fill(hi)
+        small = [v for v in acc if 0 < x[v] < acc[v][3]]
+        if not small:
+            return {v: round(z, 6) for v, z in x.items() if z >= acc[v][3]}
+        acc.pop(min(small, key=x.get))
+    return {}
 
 
 def done_qty(x, size):
@@ -366,9 +390,10 @@ def write(name, cols, rows):
 
 # ---------------------------------------------------------------- ordres du pilote (Hyperliquid seulement)
 
-def real_enter(j, snap, ctx, broker, journal, alerts, cands=None):
+def real_enter(j, snap, ctx, broker, journal, alerts, cands=None, target=None):
     """Short dimensionne sur le capital du compte de l'exchange, stop de protection sur l'exchange, puis la couverture au meme notionnel, sur le meme
-    exchange. ctx = prix de cet exchange ; cands = lignes de couverture candidates (noms de cet exchange). Une erreur n'interrompt jamais le journal fictif."""
+    exchange. ctx = prix de cet exchange ; cands = lignes de couverture candidates (noms de cet exchange) ; target = part de ce compte fixee par allocate(),
+    sinon F x capital x w. Les plafonds du compte restent verifies ici. Une erreur n'interrompt jamais le journal fictif."""
     mode, coin, ex = "reel" if broker.live else "simulation", j["coin"], j["exch"]
     if (LIVE / "STOP").exists():
         j["r_note"] = "arret d'urgence : pas d'entree"
@@ -387,10 +412,11 @@ def real_enter(j, snap, ctx, broker, journal, alerts, cands=None):
             j["vol3d"] = round(vol3d(candles(ex, coin, t - 3 * 86400, t), t) or VOL_REF, 5)
         vol = float(j["vol3d"])
         short_open = sum(-z * price(ctx, c, 0.0) for c, z in have.items() if z < 0)
-        caps = {"taille cible": F * value * min(1.0, VOL_REF / vol), "marge": (MAX_MARGIN * value - used) / (1 / LEV_SHORT + 1 / LEV_HEDGE),
+        caps = {"taille cible": F * value * min(1.0, VOL_REF / vol) if target is None else target, "marge": (MAX_MARGIN * value - used) / (1 / LEV_SHORT + 1 / LEV_HEDGE),
                 "plafond d'exposition": MAX_SHORT * value - short_open}
         usd = min(caps.values())
-        j["r_note"] = (f"taille {usd:.0f} $ = {F:.0%} x {value:.0f} $ x min(1, {VOL_REF:.0%} / vol {vol:.1%}), marge deja bloquee {used:.0f} $, "
+        j["r_note"] = (("" if target is None else f"part de la repartition {target:.0f} $ ; ") +
+                       f"taille {usd:.0f} $ (compte {value:.0f} $, w = min(1, {VOL_REF:.0%} / vol {vol:.1%})), marge deja bloquee {used:.0f} $, "
                        f"short deja ouvert {short_open:.0f} $ (limite : {min(caps, key=caps.get)})")
         if usd < MIN_LEG[ex]:
             j["r_note"] += " : marge ou plafond d'exposition atteint, pas d'entree"
@@ -523,15 +549,22 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
             j["note"] = why or ("listing de perp : suivi fictif seulement (spec 18)" if perp else "")
             busy |= {(perp, tick)} if ok else set()
         journal.append(j)
-        alerts.append(f"ANNONCE {a['venue']} {tick} -> {j['status']} {j['note']}" + (f" | entree prevue {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(entry))} sur {exch}:{coin}" if j["status"] == "signal" else ""))
-    for j in journal:                                               # 2. entrees dues
-        if j["status"] != "signal" or now < int(j["entry_ts"]):
-            continue
-        if now > int(j["entry_ts"]) + LATE_S:
-            j |= {"status": "entree manquee", "note": f"passage en retard de plus de {LATE_S // 3600} h"}
-            alerts.append(f"ENTREE MANQUEE {j['coin']}")
-            continue
-        try:                                                        # une ligne en erreur (coin radie, API) ne bloque jamais les autres
+        a_c, also = (aster_syms or {}).get(tick), ""
+        if j["status"] == "signal" and j["exch"] == "hl" and a_c and not perp:    # perp aussi sur Aster : ligne jumelle, le signal est pris sur les deux comptes
+            tw = j | {"id": j["id"] + "-aster", "exch": "aster", "coin": a_c, "twin": j["id"], "vol3d": ""}
+            try:
+                cs = candles("aster", a_c, t - 3 * 86400, t)
+                ok, why = eligible(cs, t)
+                tw["vol3d"] = round(vol3d(cs, t) or 0.0, 5) or ""
+            except Exception as e:
+                ok, why = True, f"eligibilite a verifier a l'entree ({type(e).__name__})"
+            tw |= {"status": "signal" if ok else "ineligible", "note": why}
+            journal.append(tw)
+            also = f" et aster:{a_c}" if ok else f" (Aster ecarte : {why})"
+        alerts.append(f"ANNONCE {a['venue']} {tick} -> {j['status']} {j['note']}" + (f" | entree prevue {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(entry))} sur {exch}:{coin}{also}" if j["status"] == "signal" else ""))
+    def paper_enter(j):
+        """Entree fictive d'une ligne -> (carnet, lignes de couverture), ou None si elle est reportee ou ecartee. Une ligne en erreur ne bloque pas les autres."""
+        try:
             if j["note"].startswith("eligibilite a verifier"):
                 t = int(j["t_ann"])
                 cs = candles(j["exch"], j["coin"], t - 3 * 86400, t)
@@ -540,17 +573,17 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
                 if not ok:
                     j["status"] = "ineligible"
                     alerts.append(f"SIGNAL ECARTE A L'ENTREE {j['coin']} : {why}")
-                    continue
+                    return None
             s = book_snapshot(j["exch"], j["coin"])
             if j["exch"] == "aster":                                # identite : le perp Aster est-il le coin liste ? (6 collisions de tickers connues)
                 ok, ratio = lf.same_asset(lf.ref_price(j["venue"], j["market"], j["ticker"]), s["mid"], lf.lot(j["coin"]) / lf.lot(j["ticker"]))
                 if ratio is None:
                     alerts.append(f"ENTREE REPORTEE {j['coin']} : identite non verifiable (pas encore de prix sur {j['venue']}) -> nouvel essai au prochain passage")
-                    continue
+                    return None
                 if not ok:
                     j |= {"status": "ineligible", "note": f"identite douteuse : prix Aster = {ratio:.2f} x prix sur {j['venue']}"}
                     alerts.append(f"SIGNAL ECARTE A L'ENTREE {j['coin']} : {j['note']}")
-                    continue
+                    return None
             shorted = {x["ticker"] for x in journal if x["status"] in ("signal", "ouvert")} | {j["ticker"]}
             legs = [c for c in HEDGE if c in ctx and c not in shorted]
             px = s["sell"][0] or s["bid"]
@@ -563,12 +596,50 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
                   "legs": json.dumps(legs), "legs_px_in": json.dumps([price(ctx, c, 0.0) for c in legs])}
         except Exception as e:
             alerts.append(f"ENTREE REPORTEE {j['exch']}:{j['coin']} ({type(e).__name__} : {e}) -> nouvel essai au prochain passage")
+            return None
+        alerts.append(f"ENTREE FICTIVE short {j['exch']}:{j['coin']}{' (jumelle)' if j['twin'] else ''} a {px} (spread {s['spread_bp']:.1f} pb, "
+                      f"glissement 1 k$ {j['slip_1k_bp']} pb, 5 k$ {j['slip_5k_bp']} pb)")
+        return s, legs
+
+    def account(ex):
+        """-> (valeur, short ouvert en $, marge bloquee, ordre minimum) du compte `ex`, pour allocate()."""
+        value, have, used = brokers[ex].state()
+        return value, sum(-z * price(pctx[ex], c, 0.0) for c, z in have.items() if z < 0), used, MIN_LEG[ex]
+
+    done, by_id = set(), {x["id"]: x for x in journal}
+    for j in journal:                                               # 2. entrees dues, par SIGNAL : la ligne principale et sa jumelle ensemble
+        if j["id"] in done or j["status"] != "signal" or now < int(j["entry_ts"]):
             continue
-        alerts.append(f"ENTREE FICTIVE short {j['exch']}:{j['coin']} a {px} (spread {s['spread_bp']:.1f} pb, glissement 1 k$ {j['slip_1k_bp']} pb, 5 k$ {j['slip_5k_bp']} pb)")
-        b = brokers.get(j["exch"])
-        if b and not fam(j):                                        # un listing de perp n'est PAS la regle v1 : aucun ordre reel, quel que soit le mode
-            cands = legs if j["exch"] == "hl" else [aster_syms[c] for c in legs if c in (aster_syms or {})]
-            real_enter(j, s, pctx[j["exch"]], b, journal, alerts, cands)
+        if j["twin"] and by_id.get(j["twin"], {}).get("status") == "signal":
+            continue                                                # traitee avec sa ligne principale
+        group = [j] + [x for x in journal if x["twin"] == j["id"] and x["status"] == "signal"]
+        done |= {x["id"] for x in group}
+        if now > int(j["entry_ts"]) + LATE_S:
+            for x in group:
+                x |= {"status": "entree manquee", "note": f"passage en retard de plus de {LATE_S // 3600} h"}
+                alerts.append(f"ENTREE MANQUEE {x['exch']}:{x['coin']}")
+            continue
+        entered = [(x, *r) for x in group if (r := paper_enter(x))]
+        real = [(x, s, legs) for x, s, legs in entered if brokers.get(x["exch"]) and not fam(x)]   # un listing de perp n'est PAS la regle v1 : aucun ordre reel
+        if not real:
+            continue
+        try:
+            accounts = {x["exch"]: account(x["exch"]) for x, _, _ in real}
+            if j["vol3d"] == "":
+                t = int(j["t_ann"])
+                j["vol3d"] = round(vol3d(candles(j["exch"], j["coin"], t - 3 * 86400, t), t) or VOL_REF, 5)
+            target = F * weight(j) * sum(E for E, _, _, _ in accounts.values())      # F x w x capital des comptes ou le signal se trade
+            alloc = allocate(target, accounts)
+        except Exception as e:
+            alerts.append(f"REPARTITION IMPOSSIBLE {j['ticker']} ({type(e).__name__}) : pas d'ordre reel pour ce signal")
+            continue
+        for x, s, legs in real:
+            if x["exch"] not in alloc:
+                x["r_note"] = f"cible {target:.0f} $ : part nulle ou sous l'ordre minimum sur ce compte (plafonds atteints), pas d'ordre"
+                alerts.append(f"ENTREE {x['exch'].upper()} ECARTEE {x['coin']} : {x['r_note']}")
+                continue
+            cands = legs if x["exch"] == "hl" else [aster_syms[c] for c in legs if c in (aster_syms or {})]
+            real_enter(x, s, pctx[x["exch"]], brokers[x["exch"]], journal, alerts, cands, target=alloc[x["exch"]])
     for j in journal:                                               # 3. stops et sorties
         if j["status"] != "ouvert":
             continue
@@ -670,6 +741,9 @@ def main():
         days = getattr(b, "days_left", None)
         if days is not None and days < KEY_WARN_DAYS and time.gmtime(now).tm_hour == 0:     # une fois par jour : sans cle valide, plus d'entree NI de sortie
             alerts.append(f"LA CLE D'AGENT {ex.upper()} EXPIRE DANS {days:.0f} JOURS : a renouveler (secrets de la tache)")
+    if len(values) == 2 and time.gmtime(now).tm_hour == 0 and max(values.values()) / sum(values.values()) > BALANCE_ALERT:
+        alerts.append("COLLATERAL DESEQUILIBRE : " + ", ".join(f"{ex} {v:.0f} $" for ex, v in values.items()) +
+                      f" (plus de {BALANCE_ALERT:.0%} sur un compte) -> transfert manuel conseille, les cles du pilote ne peuvent rien retirer")
     why = hard_stops(journal, values)
     if why and not (LIVE / "STOP").exists():
         (LIVE / "STOP").write_text(f"arret dur du {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(now))} : " + " ; ".join(why) + "\n", encoding="utf-8")
@@ -708,6 +782,14 @@ def _selftest():
     base = [closed(i) for i in range(26)] + [closed(26 + i, "stoppe") for i in range(4)]
     assert hard_stops(base) == [] and "5 stops" in hard_stops(base[1:] + [closed(99, "stoppe")])[0]
     assert sprt_v11([closed(i, net=-0.5) | {"t_in": V11_FROM - 1} for i in range(9)])[2] == "en cours"          # v1 : hors du test de la v1.1
+    assert sprt_v11([closed(i, net=-0.5) | {"t_in": V11_FROM, "twin": "x"} for i in range(9)])[2] == "en cours"  # une jumelle ne compte jamais
+    m75 = 75 / LEV_SHORT + 75 / LEV_HEDGE                                                         # marge d'un short de 75 $ couvert
+    near = lambda a, b: a.keys() == b.keys() and all(abs(a[k] - b[k]) < 1e-6 for k in a)
+    assert near(allocate(150, {"hl": (150, 0, 0, 11), "aster": (150, 0, 0, 6)}), {"hl": 75, "aster": 75})                       # rien d'ouvert : duplication
+    assert near(allocate(150, {"hl": (150, 75, m75, 11), "aster": (150, 0, 0, 6)}), {"hl": 37.5, "aster": 112.5})              # equilibrage
+    assert near(allocate(150, {"hl": (150, 112.5, 1.5 * m75, 11), "aster": (150, 112.5, 1.5 * m75, 6)}), {"hl": 37.5, "aster": 37.5})   # reduit
+    assert near(allocate(14, {"aster": (150, 0, 0, 6)}), {"aster": 14})                                                       # un seul exchange
+    assert near(allocate(150, {"hl": (150, 145, 0, 11), "aster": (150, 0, 0, 6)}), {"aster": 150}) and allocate(10, {"hl": (150, 0, 0, 11)}) == {}
     assert sprt_v11([closed(i, net=-0.5) | {"t_in": V11_FROM} for i in range(9)])[2] == "ARRET"
     assert hard_stops(base + [closed(100, "stoppe", -0.9, market="perp")]) == []               # la famille perp n'entre ni dans le test ni dans les arrets
     assert "funding" in hard_stops([closed(i, fund=-0.03) for i in range(20)])[0] and "aster" in hard_stops(base, {"hl": 150.0, "aster": 99.0})[0]
@@ -840,6 +922,18 @@ def _selftest():
     assert not [x for x in aa if "ECART" in x]
     step(t + HOLD_S + 60, ja, [], aa, ctx2, syms, {"hl": bh, "aster": ba}, actx)
     assert sa["r_net_usd"] != "" and ba.pos == {} and bh.sent == []
+    hh, aa2, refs["SUI"] = Fake(live=True), Fake(live=True), 1.0                                   # signal sur les deux exchanges : duplication et ligne jumelle
+    syms2 = syms | {"SUI": "SUIUSDT"}
+    actx2 = actx | {"SUIUSDT": {"midPx": "1"}}
+    flat = lambda exch, coin, a, b: [{"t": (t - 3 * 86400 + 300 * i) * 1000, "T": (t - 3 * 86400 + 300 * i + 300) * 1000, "o": "1", "h": "1.001",
+                                      "c": "1.001" if i % 2 else "0.999"} for i in range(864)]
+    candles, jd, ad = flat, [], []
+    step(t + 60, jd, [{"ts": t, "venue": "binance", "market": "spot", "ticker": "SUI"}], ad, ctx2, syms2, {"hl": hh, "aster": aa2}, actx2)
+    assert [(x["exch"], x["coin"], x["status"], x["twin"]) for x in jd] == [("hl", "SUI", "signal", ""), ("aster", "SUIUSDT", "signal", jd[0]["id"])], ad
+    step(int(jd[0]["entry_ts"]), jd, [], ad, ctx2, syms2, {"hl": hh, "aster": aa2}, actx2)
+    assert hh.pos.get("SUI") == -75.0 and aa2.pos.get("SUIUSDT") == -75.0 and [c for c, _, _ in json.loads(jd[1]["r_legs"])] == ["ETHUSDT", "SOLUSDT", "DOGEUSDT", "BNBUSDT"], ad
+    step(int(jd[0]["entry_ts"]) + HOLD_S + 60, jd, [], ad, ctx2, syms2, {"hl": hh, "aster": aa2}, actx2)
+    assert all(x["r_net_usd"] != "" for x in jd) and hh.pos == {} and aa2.pos == {} and len(v1_closed(jd)) == 1      # deux trades reels, un seul signal
     lf.ref_price = ref_price
 
     def candles_gone(exch, coin, a, b):
