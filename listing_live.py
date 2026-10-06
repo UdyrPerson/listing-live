@@ -51,6 +51,7 @@ MAX_MARGIN, MIN_LEG = 0.7, 11                  # marge initiale du compte <= 70 
 MAX_SHORT = 1.0                                # short total <= 1 x le capital : au-dela de ~1,25 x, un squeeze commun de +50 % liquiderait le compte AVANT les stops
 SPRT_DRIFT, SPRT_BOUND, SPRT_NMAX = 0.00828, 1.337, 264    # Wald H0 0 / H1 238 pb sur le resultat couvert PONDERE par la taille (w = min(1, VOL_REF / vol)),
                                                # sigma pondere 1 004 pb, erreurs 10 % / 10 % ; simule : arret a tort 12 % si 238 pb, validation a tort 11 % si 0, ~108 trades
+V11_FROM = 1791277200                          # 2026-10-06 09:00 UTC : la v1.1 (couverture, test) repart de zero (research/listing-strategy-v1.md)
 STOPS_MAX, FUND_MIN, FLOOR_USD = (5, 30), -0.02, 100.0     # arrets durs : >= 5 stops sur les 30 derniers trades, funding moyen < -200 pb sur 20, compte < 100 $
 MAX_NEW_MARKETS = 8                # plus de 8 marches neufs d'un coup = etat perdu, pas 8 listings : on reamorce sans emettre
 KEY_WARN_DAYS = 14
@@ -137,15 +138,19 @@ def sprt(values):
     return len(values), s, "en cours"
 
 
-def v1_closed(journal):
-    """Trades fictifs clos de la regle v1 (hors suivi des listings de perp, autre regle), dans l'ordre des sorties."""
-    return sorted((x for x in journal if x["net_hedged"] != "" and x.get("market") != "perp"), key=lambda x: int(x["t_out"]))
+def v1_closed(journal, since=0):
+    """Trades fictifs clos de la regle v1 (hors suivi des listings de perp, autre regle) entres depuis `since`, dans l'ordre des sorties."""
+    return sorted((x for x in journal if x["net_hedged"] != "" and x.get("market") != "perp" and int(x["t_in"] or 0) >= since), key=lambda x: int(x["t_out"]))
+
+
+def sprt_v11(journal):
+    return sprt([weight(x) * float(x["net_hedged"]) for x in v1_closed(journal, V11_FROM)])
 
 
 def hard_stops(journal, value=None):
     """Arrets durs (research/listing-strategy-v1.md, recalibres le 2026-10-06) -> raisons ; chacune cree live/STOP. value = valeur du compte reel, ou None."""
     v1, why = v1_closed(journal), []
-    n, s, verdict = sprt([weight(x) * float(x["net_hedged"]) for x in v1])
+    n, s, verdict = sprt_v11(journal)
     if verdict == "ARRET":
         why.append(f"test sequentiel a l'arret (n {n}, S {s:+.3f})")
     last = v1[-STOPS_MAX[1]:]
@@ -570,9 +575,9 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None):
         short, hedge, total = paper_pnl(px_in, px_out, f_short, legs_in, legs_out, f_legs, TAKER[j["exch"]])
         j |= {"status": status, "t_out": t_out, "px_out": px_out, "funding_sum": round(f_short, 6), "legs_px_out": json.dumps(legs_out), "legs_funding": round(f_legs, 6),
               "short_net": round(short, 5), "hedge_net": round(hedge, 5), "net_hedged": round(total, 5)}
-        n, S, verdict = sprt([weight(x) * float(x["net_hedged"]) for x in v1_closed(journal)])
+        n, S, verdict = sprt_v11(journal)
         alerts.append(f"SORTIE FICTIVE ({status}) {j['exch']}:{j['coin']} : short {short * 1e4:+.0f} pb, couverture {hedge * 1e4:+.0f} pb, total {total * 1e4:+.0f} pb | "
-                      f"test sequentiel (v1, pondere) : n {n}, S {S:+.3f}, bornes [{SPRT_DRIFT * n - SPRT_BOUND:+.2f} ; {SPRT_DRIFT * n + SPRT_BOUND:+.2f}] -> {verdict}")
+                      f"test sequentiel (v1.1, pondere) : n {n}, S {S:+.3f}, bornes [{SPRT_DRIFT * n - SPRT_BOUND:+.2f} ; {SPRT_DRIFT * n + SPRT_BOUND:+.2f}] -> {verdict}")
     if broker:
         for j in journal:                                           # 4. sorties du pilote, y compris celles restees incompletes a un passage precedent
             if j["r_size"] != "" and j["r_net_usd"] == "" and j["status"] in ("clos", "stoppe"):
@@ -659,6 +664,8 @@ def _selftest():
         return {c: "" for c in J_COLS} | {"t_out": i, "status": status, "net_hedged": net, "funding_sum": fund, "market": market}
     base = [closed(i) for i in range(26)] + [closed(26 + i, "stoppe") for i in range(4)]
     assert hard_stops(base) == [] and "5 stops" in hard_stops(base[1:] + [closed(99, "stoppe")])[0]
+    assert sprt_v11([closed(i, net=-0.5) | {"t_in": V11_FROM - 1} for i in range(9)])[2] == "en cours"          # v1 : hors du test de la v1.1
+    assert sprt_v11([closed(i, net=-0.5) | {"t_in": V11_FROM} for i in range(9)])[2] == "ARRET"
     assert hard_stops(base + [closed(100, "stoppe", -0.9, market="perp")]) == []               # la famille perp n'entre ni dans le test ni dans les arrets
     assert "funding" in hard_stops([closed(i, fund=-0.03) for i in range(20)])[0] and "plancher" in hard_stops(base, 99.0)[0]
     journal, alerts = [], []                                                                      # machine a etats, sans reseau
