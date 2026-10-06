@@ -6,3 +6,5 @@ upbit-CASHCAT-1790573232,1790573232,upbit,CASHCAT,hl,CASHCAT,clos,,1790703300,17
 binance-perp-CT-1790836201,1790836201,binance,CT,aster,CTUSDT,ineligible,perp trop recent (230 bougies 5 m en 3 jours),1790966400,1791398400,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,perp,
 upbit-POD-1790915852,1790915852,upbit,POD,,,ineligible,pas de perp sur Hyperliquid ni sur Aster,1791045900,1791477900,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,
 bithumb-US-1790920378,1790920378,bithumb,US,aster,USUSDT,ouvert,,1791050400,1791482493,1791050493,0.020616,0.020642,12.6,0.02060986544014072,9.28,13.82,,,"[""ETH"", ""HYPE"", ""ZEC"", ""PUMP"", ""SOL""]","[2687.55, 89.1695, 1307.85, 0.006076, 119.915]",,,,,,,,,,,,,,,,,,,spot_krw,0.42856
+bithumb-BR-1791273129,1791273129,bithumb,BR,aster,BRUSDT,signal,,1791403200,1791835200,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,0.15943
+bithumb-POD-1791273129,1791273129,bithumb,POD,aster,PODUSDT,signal,,1791403200,1791835200,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,0.12148

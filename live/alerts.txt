@@ -1,0 +1,2 @@
+ANNONCE bithumb BR -> signal  | entree prevue 2026-10-07 20:00 UTC sur aster:BRUSDT
+ANNONCE bithumb POD -> signal  | entree prevue 2026-10-07 20:00 UTC sur aster:PODUSDT

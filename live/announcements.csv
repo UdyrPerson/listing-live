@@ -6,3 +6,5 @@ ts,venue,market,ticker,n_tickers,head,source
 1790836201,binance,perp,CT,1,Binance Futures Will Launch USDⓈ-Margined CTUSDT Perpetual Contract (2026-10-01),binance_cms
 1790915852,upbit,spot_krw,POD,1,【Upbit 将上线 POD 韩元、BTC 及 USDT 交易对】,ForesightNews
 1790920378,bithumb,spot_krw,US,1,nouveau marche US/KRW detecte sur bithumb,bithumb_markets
+1791273129,bithumb,spot_krw,BR,2,"베드록(BR),  돌핀(POD) 원화 마켓 추가",bithumb_api
+1791273129,bithumb,spot_krw,POD,2,"베드록(BR),  돌핀(POD) 원화 마켓 추가",bithumb_api
