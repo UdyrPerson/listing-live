@@ -1,0 +1,4 @@
+ENTREE FICTIVE short aster:BRUSDT a 0.518472007811701 (spread 12.9 pb, glissement 1 k$ 8.15 pb, 5 k$ 8.79 pb)
+ENTREE REEL EN ECHEC BRUSDT : ordre refuse (ExchangeError : aster {"code":-5019,"msg":"Service not available in your region."})
+ENTREE FICTIVE short aster:PODUSDT a 0.6393 (spread 283.7 pb, glissement 1 k$  pb, 5 k$  pb)
+ENTREE REEL EN ECHEC PODUSDT : ordre refuse (ExchangeError : aster {"code":-5019,"msg":"Service not available in your region."})
