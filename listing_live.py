@@ -42,7 +42,7 @@ LATE_S = 6 * 3600                  # tolerance de retard a l'entree. La tache Gi
                                    # un plateau du delai d'entree (+36 h a +60 h : +259 a +328 pb couvert), donc entrer tard vaut bien mieux que manquer le trade.
 LOOKBACK_S = 12 * 3600             # profondeur de relecture des fils a chaque passage (la tache GitHub peut sauter des heures)
 HEDGE = ("BNB", "ETH", "SOL", "DOGE")  # v1.1 (2026-10-06) ; BNB en tete : son pas de cotation sur Aster (~8 $) le fait sauter sur une petite ligne, et la part
-                                    # d'une ligne sautee ne se reporte que sur les SUIVANTES ; : meme risque retire que le panier de mid-caps teste (~25 %), mais celui-ci chutait de 252 pb
+                                    # d'une ligne sautee ne se reporte que sur les SUIVANTES. Meme risque retire que le panier de mid-caps teste (~25 %), mais celui-ci chutait de 252 pb
                                     # pendant les tenues et annulait une partie de l'edge ; XRP retire (le moins correle), BTC moins bon a tout ratio
 BEST_EFFORT = {"upbit", "bithumb"}  # sources redondantes (les fils couvrent Upbit a 96 % et Bithumb a 97 %) : une panne ne merite pas d'alerte
 ALERT_AFTER = (6, 24, 72)          # nombre de passages rates de suite qui declenchent une alerte sur une source
