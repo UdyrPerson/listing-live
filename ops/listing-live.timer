@@ -1,0 +1,10 @@
+[Unit]
+Description=listing-live toutes les 15 minutes
+
+[Timer]
+OnCalendar=*:07/15
+Persistent=true
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

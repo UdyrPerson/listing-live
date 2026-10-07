@@ -1,0 +1,12 @@
+[Unit]
+Description=listing-live : un passage du direct de la regle listing v1.1
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=listing
+Group=listing
+ExecStart=/opt/listing-live/repo/ops/run.sh
+TimeoutStartSec=600
+Nice=5

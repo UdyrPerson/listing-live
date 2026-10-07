@@ -1,0 +1,27 @@
+# Garde-fou du direct, qui tourne sur un VPS : alerte Telegram si aucun etat n'a ete pousse depuis 2 h. Ne passe aucun ordre, ne lit aucune cle d'exchange.
+name: watchdog
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 100
+      - name: dernier passage du VPS
+        env:
+          TG_BOT: ${{ secrets.TELEGRAM_BOT }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT }}
+        run: |
+          last=$(git log -1 --format=%ct -- live/equity.csv)
+          age=$(( ($(date +%s) - last) / 3600 ))
+          echo "dernier etat pousse il y a ${age} h"
+          if [ "$age" -ge 2 ]; then
+            curl -s --max-time 20 -d chat_id="$TG_CHAT" --data-urlencode text="listing-live : AUCUN PASSAGE DU VPS DEPUIS ${age} H. Verifier le service listing-live sur le VPS." "https://api.telegram.org/bot${TG_BOT}/sendMessage" > /dev/null
+          fi
