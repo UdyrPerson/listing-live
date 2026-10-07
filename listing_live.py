@@ -41,7 +41,8 @@ DELAY_S, HOLD_S, STOP = 36 * 3600, 120 * 3600, 0.5
 LATE_S = 6 * 3600                  # tolerance de retard a l'entree. La tache GitHub ne delivre que ~1 passage sur 4 (trous jusqu'a 4,6 h) ; le backtest montre
                                    # un plateau du delai d'entree (+36 h a +60 h : +259 a +328 pb couvert), donc entrer tard vaut bien mieux que manquer le trade.
 LOOKBACK_S = 12 * 3600             # profondeur de relecture des fils a chaque passage (la tache GitHub peut sauter des heures)
-HEDGE = ("ETH", "SOL", "DOGE", "BNB")  # v1.1 (2026-10-06) : meme risque retire que le panier de mid-caps teste (~25 %), mais celui-ci chutait de 252 pb
+HEDGE = ("BNB", "ETH", "SOL", "DOGE")  # v1.1 (2026-10-06) ; BNB en tete : son pas de cotation sur Aster (~8 $) le fait sauter sur une petite ligne, et la part
+                                    # d'une ligne sautee ne se reporte que sur les SUIVANTES ; : meme risque retire que le panier de mid-caps teste (~25 %), mais celui-ci chutait de 252 pb
                                     # pendant les tenues et annulait une partie de l'edge ; XRP retire (le moins correle), BTC moins bon a tout ratio
 BEST_EFFORT = {"upbit", "bithumb"}  # sources redondantes (les fils couvrent Upbit a 96 % et Bithumb a 97 %) : une panne ne merite pas d'alerte
 ALERT_AFTER = (6, 24, 72)          # nombre de passages rates de suite qui declenchent une alerte sur une source
@@ -851,10 +852,10 @@ def _selftest():
     assert b.lev == {"SUI": 3, "ETH": 10, "SOL": 10, "DOGE": 10, "BNB": 10} and expected(jr) == b.pos and not [x for x in al if "ECART" in x]
     step(t + 3660, jr, [], al, ctx2, {}, b)
     assert sig["status"] == "ouvert"                                                              # passage suivant : la position est sur le compte, rien ne bouge
-    b.fail = {("BNB", "sell")}                                                                    # sortie : la derniere ligne refuse de se vendre
+    b.fail = {(HEDGE[-1], "sell")}                                                                # sortie : la derniere ligne refuse de se vendre
     step(t + HOLD_S + 60, jr, [], al, ctx2, {}, b)
     n_buy = sum(x[:2] == ("SUI", "buy") for x in b.sent)
-    assert sig["status"] == "clos" and sig["r_px_out"] != "" and sig["r_net_usd"] == "" and n_buy == 1 and b.pos == {"BNB": json.loads(sig["r_legs"])[3][1]} and b.cancels == 1
+    assert sig["status"] == "clos" and sig["r_px_out"] != "" and sig["r_net_usd"] == "" and n_buy == 1 and b.pos == {HEDGE[-1]: json.loads(sig["r_legs"])[3][1]} and b.cancels == 1
     b.fail = set()
     step(t + HOLD_S + 3660, jr, [], al, ctx2, {}, b)                                              # nouvel essai : ne rachete PAS le short une 2e fois, ne revend PAS ETH
     assert sig["r_net_usd"] != "" and sum(x[:2] == ("SUI", "buy") for x in b.sent) == 1 and sum(x[:2] == ("ETH", "sell") for x in b.sent) == 1 and b.pos == {} and expected(jr) == {}
@@ -951,7 +952,7 @@ def _selftest():
     assert sb["status"] == "ineligible" and "identite douteuse" in sb["note"]                      # prix Aster = 1/3 du prix liste : autre actif
     refs["Q"], aa = 1.0, []
     step(t + 60, ja, [], aa, ctx2, syms, {"hl": bh, "aster": ba}, actx)
-    assert bh.sent == [] and sa["r_size"] == 75.0 and [c for c, _, _ in json.loads(sa["r_legs"])] == ["ETHUSDT", "SOLUSDT", "DOGEUSDT", "BNBUSDT"], aa
+    assert bh.sent == [] and sa["r_size"] == 75.0 and [c for c, _, _ in json.loads(sa["r_legs"])] == [h + "USDT" for h in HEDGE], aa
     assert expected(ja, "reel", "aster") == ba.pos and expected(ja, "reel", "hl") == {}
     step(t + 3660, ja, [], aa, ctx2, syms, {"hl": bh, "aster": ba}, actx)
     assert not [x for x in aa if "ECART" in x]
@@ -966,7 +967,7 @@ def _selftest():
     step(t + 60, jd, [{"ts": t, "venue": "binance", "market": "spot", "ticker": "SUI"}], ad, ctx2, syms2, {"hl": hh, "aster": aa2}, actx2)
     assert [(x["exch"], x["coin"], x["status"], x["twin"]) for x in jd] == [("hl", "SUI", "signal", ""), ("aster", "SUIUSDT", "signal", jd[0]["id"])], ad
     step(int(jd[0]["entry_ts"]), jd, [], ad, ctx2, syms2, {"hl": hh, "aster": aa2}, actx2)
-    assert hh.pos.get("SUI") == -75.0 and aa2.pos.get("SUIUSDT") == -75.0 and [c for c, _, _ in json.loads(jd[1]["r_legs"])] == ["ETHUSDT", "SOLUSDT", "DOGEUSDT", "BNBUSDT"], ad
+    assert hh.pos.get("SUI") == -75.0 and aa2.pos.get("SUIUSDT") == -75.0 and [c for c, _, _ in json.loads(jd[1]["r_legs"])] == [h + "USDT" for h in HEDGE], ad
     step(int(jd[0]["entry_ts"]) + HOLD_S + 60, jd, [], ad, ctx2, syms2, {"hl": hh, "aster": aa2}, actx2)
     assert all(x["r_net_usd"] != "" for x in jd) and hh.pos == {} and aa2.pos == {} and len(v1_closed(jd)) == 1      # deux trades reels, un seul signal
     lf.ref_price = ref_price
