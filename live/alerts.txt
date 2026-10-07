@@ -1,4 +1,0 @@
-NOUVEL ESSAI D'ENTREE REELLE aster:BRUSDT
-ENTREE REEL short 75.0 BRUSDT a 0.50932 (38 $) ; stop 196354173 ; couverture 29 $ [('ETHUSDT', 0.004), ('SOLUSDT', 0.08), ('DOGEUSDT', 105.0)] ; part de la repartition 38 $ ; taille 38 $ (compte 152 $, w = min(1, 8% / vol 15.9%)), marge deja bloquee 0 $, short deja ouvert 0 $ (limite : taille cible)
-NOUVEL ESSAI D'ENTREE REELLE aster:PODUSDT
-ENTREE REEL short 78.0 PODUSDT a 0.6394474 (50 $) ; stop 317268 ; couverture 38 $ [('ETHUSDT', 0.005), ('SOLUSDT', 0.11), ('DOGEUSDT', 137.0)] ; part de la repartition 50 $ ; taille 50 $ (compte 152 $, w = min(1, 8% / vol 12.1%)), marge deja bloquee 16 $, short deja ouvert 38 $ (limite : taille cible)
