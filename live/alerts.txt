@@ -1,0 +1,2 @@
+ANNONCE upbit POD -> ineligible deja un signal ou une position sur ce coin
+ANNONCE upbit NMR -> ineligible pas de perp sur Hyperliquid ni sur Aster
