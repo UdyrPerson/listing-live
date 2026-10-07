@@ -682,6 +682,23 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
         n, S, verdict = sprt_v11(journal)
         alerts.append(f"SORTIE FICTIVE ({status}) {j['exch']}:{j['coin']} : short {short * 1e4:+.0f} pb, couverture {hedge * 1e4:+.0f} pb, total {total * 1e4:+.0f} pb | "
                       f"test sequentiel (v1.1, pondere) : n {n}, S {S:+.3f}, bornes [{SPRT_DRIFT * n - SPRT_BOUND:+.2f} ; {SPRT_DRIFT * n + SPRT_BOUND:+.2f}] -> {verdict}")
+    for j in journal:                                               # 3 bis. nouvel essai d'une entree reelle en echec, tant que la fenetre LATE_S est ouverte
+        b = brokers.get(j["exch"])                                  # APRES l'etape 3 : une position ouverte ici n'est jamais examinee dans ce passage
+        if not (b and j["status"] == "ouvert" and j["r_size"] == "" and j["r_note"].startswith("entree en echec") and not fam(j)
+                and int(j["t_in"]) < now <= int(j["entry_ts"]) + LATE_S):
+            continue
+        try:
+            s = book_snapshot(j["exch"], j["coin"])
+            acc = account(j["exch"])
+            alloc = allocate(F * weight(j) * acc[0], {j["exch"]: acc})
+        except Exception as e:
+            alerts.append(f"NOUVEL ESSAI D'ENTREE REPORTE {j['exch']}:{j['coin']} ({type(e).__name__})")
+            continue
+        if j["exch"] in alloc:
+            legs = json.loads(j["legs"])
+            alerts.append(f"NOUVEL ESSAI D'ENTREE REELLE {j['exch']}:{j['coin']}")
+            real_enter(j, s, pctx[j["exch"]], b, journal, alerts, legs if j["exch"] == "hl" else [aster_syms[c] for c in legs if c in (aster_syms or {})],
+                       target=alloc[j["exch"]])
     for j in journal:                                               # 4. sorties du pilote, y compris celles restees incompletes a un passage precedent
         b = brokers.get(j["exch"])
         if b and j["r_size"] != "" and j["r_net_usd"] == "" and j["status"] in ("clos", "stoppe"):
@@ -841,6 +858,24 @@ def _selftest():
     b.fail = set()
     step(t + HOLD_S + 3660, jr, [], al, ctx2, {}, b)                                              # nouvel essai : ne rachete PAS le short une 2e fois, ne revend PAS ETH
     assert sig["r_net_usd"] != "" and sum(x[:2] == ("SUI", "buy") for x in b.sent) == 1 and sum(x[:2] == ("ETH", "sell") for x in b.sent) == 1 and b.pos == {} and expected(jr) == {}
+    br = Fake(live=True)                                                                          # entree reelle en echec : nouvel essai au passage suivant, dans la fenetre
+    br.fail = {("SUI", "sell")}
+    sr = dict(sig) | {c: "" for c in R_COLS} | {"status": "signal", "t_in": "", "net_hedged": "", "vol3d": ""}
+    jr2 = [sr]
+    step(t + 60, jr2, [], [], ctx2, {}, br)
+    assert sr["status"] == "ouvert" and sr["r_size"] == "" and sr["r_note"].startswith("entree en echec")
+    br.fail, ar = set(), []
+    step(t + 3660, jr2, [], ar, ctx2, {}, br)
+    assert sr["r_size"] == 75.0 and br.pos["SUI"] == -75.0 and any("NOUVEL ESSAI" in x for x in ar) and not [x for x in ar if "ECART" in x]
+    step(t + 7260, jr2, [], [], ctx2, {}, br)
+    assert sr["status"] == "ouvert" and br.pos["SUI"] == -75.0                                     # pas pris pour un stop au passage suivant
+    br3 = Fake(live=True)
+    br3.fail = {("SUI", "sell")}
+    sr3 = dict(sr) | {c: "" for c in R_COLS} | {"status": "signal", "t_in": ""}
+    step(t + 60, [sr3], [], [], ctx2, {}, br3)
+    br3.fail = set()
+    step(t + LATE_S + 120, [sr3], [], [], ctx2, {}, br3)
+    assert sr3["r_size"] == "" and br3.pos == {}                                                    # fenetre close : plus d'essai
     b2 = Fake(live=True)                                                                          # stop refuse a l'entree, repose au passage suivant ; puis rachete par l'exchange
     b2.fail = {("stop", "SUI")}
     s2 = dict(sig) | {c: "" for c in R_COLS} | {"status": "signal", "t_in": "", "net_hedged": ""}
