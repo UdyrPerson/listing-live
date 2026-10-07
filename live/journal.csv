@@ -9,3 +9,5 @@ bithumb-US-1790920378,1790920378,bithumb,US,aster,USUSDT,ouvert,,1791050400,1791
 bithumb-BR-1791273129,1791273129,bithumb,BR,aster,BRUSDT,signal,,1791403200,1791835200,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,0.15943,
 bithumb-POD-1791273129,1791273129,bithumb,POD,aster,PODUSDT,signal,,1791403200,1791835200,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,0.12148,
 upbit-NMR-1791286602,1791286602,upbit,NMR,,,ineligible,pas de perp sur Hyperliquid ni sur Aster,1791416700,1791848700,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,,
+coinbase-PONS-1791388503,1791388503,coinbase,PONS,hl,PONS,signal,,1791518700,1791950700,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot,0.08597,
+coinbase-PONS-1791388503-aster,1791388503,coinbase,PONS,aster,PONSUSDT,signal,,1791518700,1791950700,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot,0.08075,coinbase-PONS-1791388503
