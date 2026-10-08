@@ -14,3 +14,6 @@ coinbase-PONS-1791388503-aster,1791388503,coinbase,PONS,aster,PONSUSDT,signal,,1
 upbit-POD-1790915841,1790915841,upbit,POD,aster,PODUSDT,ineligible,deja un signal ou une position sur ce coin,1791045900,1791477900,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,,
 upbit-NMR-1791286586,1791286586,upbit,NMR,,,ineligible,pas de perp sur Hyperliquid ni sur Aster,1791416700,1791848700,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,,
 coinbase-WHUF-1791421005,1791421005,coinbase,WHUF,,,ineligible,pas de perp sur Hyperliquid ni sur Aster,1791551100,1791983100,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot,,
+bithumb-AIA-1791425763,1791425763,bithumb,AIA,aster,AIAUSDT,signal,,1791555900,1791987900,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,0.09534,
+bithumb-CASHCAT-1791425763,1791425763,bithumb,CASHCAT,hl,CASHCAT,signal,,1791555900,1791987900,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,0.08376,
+bithumb-CASHCAT-1791425763-aster,1791425763,bithumb,CASHCAT,aster,CASHCATUSDT,signal,,1791555900,1791987900,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,0.07594,bithumb-CASHCAT-1791425763

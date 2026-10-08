@@ -1,0 +1,2 @@
+ANNONCE bithumb AIA -> signal  | entree prevue 2026-10-09 14:25 UTC sur aster:AIAUSDT
+ANNONCE bithumb CASHCAT -> signal  | entree prevue 2026-10-09 14:25 UTC sur hl:CASHCAT et aster:CASHCATUSDT

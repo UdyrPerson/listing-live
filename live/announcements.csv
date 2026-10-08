@@ -11,3 +11,5 @@ ts,venue,market,ticker,n_tickers,head,source
 1791286586,upbit,spot_krw,NMR,1,"뉴메레르(NMR) KRW, USDT 마켓 디지털 자산 추가",upbit_api
 1791388503,coinbase,spot,PONS,1,⚡️Coinbase将上线PONS现货交易,theblockbeats
 1791421005,coinbase,spot,WHUF,1,【Coinbase 将上线 Whuffie（WHUF）交易对】,chaincatcher
+1791425763,bithumb,spot_krw,AIA,2,"디에이전트에이아이(AIA), 캐시캣(CASHCAT) 원화 마켓 추가",bithumb_api
+1791425763,bithumb,spot_krw,CASHCAT,2,"디에이전트에이아이(AIA), 캐시캣(CASHCAT) 원화 마켓 추가",bithumb_api
