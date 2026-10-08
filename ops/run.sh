@@ -15,3 +15,5 @@ git add live/
 git diff --cached --quiet || git commit -q -m "live: $(date -u +%FT%H:%MZ)"
 for i in 1 2 3; do git pull -q --rebase origin main && git push -q origin main && break; sleep 5; done
 $PY ops/notify.py live/alerts.txt
+# homme mort : un ping healthchecks.io par passage, si le fichier d'URL existe (600, hors du depot) ; la periode (15 min) et la grace se reglent sur le site
+[ -r $R/healthcheck ] && curl -fsS -m 10 -o /dev/null "$(cat $R/healthcheck)" || true
