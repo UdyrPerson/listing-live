@@ -1,1 +1,0 @@
-SORTIE FICTIVE (clos) aster:USUSDT : short +2443 pb, couverture -1122 pb, total +1320 pb | test sequentiel (v1.1, pondere) : n 0, S +0.000, bornes [-1.34 ; +1.34] -> en cours
