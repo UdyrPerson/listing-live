@@ -17,3 +17,4 @@ coinbase-WHUF-1791421005,1791421005,coinbase,WHUF,,,ineligible,pas de perp sur H
 bithumb-AIA-1791425763,1791425763,bithumb,AIA,aster,AIAUSDT,signal,,1791555900,1791987900,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,0.09534,
 bithumb-CASHCAT-1791425763,1791425763,bithumb,CASHCAT,hl,CASHCAT,signal,,1791555900,1791987900,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,0.08376,
 bithumb-CASHCAT-1791425763-aster,1791425763,bithumb,CASHCAT,aster,CASHCATUSDT,signal,,1791555900,1791987900,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,0.07594,bithumb-CASHCAT-1791425763
+upbit-PONS-1791427072,1791427072,upbit,PONS,hl,PONS,ineligible,deja un signal ou une position sur ce coin,1791557100,1791989100,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,,

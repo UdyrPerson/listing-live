@@ -13,3 +13,4 @@ ts,venue,market,ticker,n_tickers,head,source
 1791421005,coinbase,spot,WHUF,1,【Coinbase 将上线 Whuffie（WHUF）交易对】,chaincatcher
 1791425763,bithumb,spot_krw,AIA,2,"디에이전트에이아이(AIA), 캐시캣(CASHCAT) 원화 마켓 추가",bithumb_api
 1791425763,bithumb,spot_krw,CASHCAT,2,"디에이전트에이아이(AIA), 캐시캣(CASHCAT) 원화 마켓 추가",bithumb_api
+1791427072,upbit,spot_krw,PONS,1,【Upbit 将上线 PONS 韩元、BTC 及 USDT 交易对】,ForesightNews
