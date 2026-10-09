@@ -1,0 +1,6 @@
+ENTREE FICTIVE short aster:AIAUSDT a 0.08052359995495242 (spread 24.8 pb, glissement 1 k$ 14.43 pb, 5 k$ 231.06 pb)
+ENTREE REEL short 569.0 AIAUSDT a 0.08054 (46 $) ; stop 746944735 ; couverture 46 $ [('ETHUSDT', 0.006), ('SOLUSDT', 0.14), ('DOGEUSDT', 182.0)] ; part de la repartition 46 $ ; taille 46 $ (compte 155 $, w = min(1, 8% / vol 9.5%)), marge deja bloquee 45 $, short deja ouvert 109 $ (limite : plafond d'exposition)
+ENTREE FICTIVE short hl:CASHCAT a 0.1125363076126306 (spread 6.2 pb, glissement 1 k$ 10.54 pb, 5 k$ 13.71 pb)
+ENTREE FICTIVE short aster:CASHCATUSDT (jumelle) a 0.11252 (spread 12.4 pb, glissement 1 k$ 6.22 pb, 5 k$ 10.42 pb)
+ENTREE REEL short 430.0 CASHCAT a 0.112381 (48 $) ; stop 569872407087 ; couverture 48 $ [('BNB', 0.016), ('ETH', 0.0049), ('SOL', 0.11), ('DOGE', 143.0)] ; part de la repartition 48 $ ; taille 48 $ (compte 160 $, w = min(1, 8% / vol 8.4%)), marge deja bloquee 49 $, short deja ouvert 112 $ (limite : plafond d'exposition)
+ENTREE ASTER ECARTEE CASHCATUSDT : cible 150 $ : part nulle ou sous l'ordre minimum sur ce compte (plafonds atteints), pas d'ordre
