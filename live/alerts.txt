@@ -1,4 +1,0 @@
-ENTREE FICTIVE short hl:PONS a 0.3604707764542325 (spread 4.4 pb, glissement 1 k$ 3.03 pb, 5 k$ 5.03 pb)
-ENTREE FICTIVE short aster:PONSUSDT (jumelle) a 0.36067945701536297 (spread 6.4 pb, glissement 1 k$ 8.19 pb, 5 k$ 8.93 pb)
-ENTREE REEL short 323.0 PONS a 0.36027 (116 $) ; stop 569453575736 ; couverture 116 $ [('BNB', 0.039), ('ETH', 0.0117), ('SOL', 0.26), ('DOGE', 348.0)] ; part de la repartition 117 $ ; taille 117 $ (compte 156 $, w = min(1, 8% / vol 8.6%)), marge deja bloquee 0 $, short deja ouvert 0 $ (limite : taille cible)
-ENTREE REEL short 73.0 PONSUSDT a 0.36027 (26 $) ; stop 89544994 ; couverture 26 $ [('BNBUSDT', 0.01), ('SOLUSDT', 0.09), ('DOGEUSDT', 105.0)] ; part de la repartition 26 $ ; taille 26 $ (compte 151 $, w = min(1, 8% / vol 8.1%)), marge deja bloquee 35 $, short deja ouvert 87 $ (limite : taille cible)
