@@ -6,3 +6,9 @@
 2026-10-05  microcap-forward  acae6dd3d1ce3a91
 2026-10-06  microcap-forward  9770cd66eca9350b
 2026-10-08  microcap-H1-pilote  517fb2feb57b5574
+2026-10-09  microcap-prereg-v01  1950f458242d800a
+2026-10-09  microcap-bench-vps-v2  33a98137371471c5
+2026-10-09  microcap-bench-calib  90685a301845495f
+2026-10-09  microcap-bench-calib-data  72704a08b1cda915
+2026-10-09  microcap-parity  4dcb7f7382ee28d7
+2026-10-09  microcap-forward  7af2a0b7368298cc
