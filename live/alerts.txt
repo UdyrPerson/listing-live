@@ -1,2 +1,0 @@
-ENTREE FICTIVE short aster:CTRUSDT a 0.012223509659235242 (spread 55.5 pb, glissement 1 k$ 28.14 pb, 5 k$  pb)
-ENTREE ASTER ECARTEE CTRUSDT : cible 77 $ : part nulle ou sous l'ordre minimum sur ce compte (plafonds atteints), pas d'ordre
