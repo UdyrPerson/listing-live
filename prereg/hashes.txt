@@ -12,3 +12,4 @@
 2026-10-09  microcap-bench-calib-data  72704a08b1cda915
 2026-10-09  microcap-parity  4dcb7f7382ee28d7
 2026-10-09  microcap-forward  7af2a0b7368298cc
+2026-10-09  microcap-exit-study  9090fa879a281530
