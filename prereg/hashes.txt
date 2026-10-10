@@ -14,3 +14,4 @@
 2026-10-09  microcap-forward  7af2a0b7368298cc
 2026-10-09  microcap-exit-study  9090fa879a281530
 2026-10-09  microcap-additif-sorties  8659829495ff7032
+2026-10-10  microcap-parity-v2  c767df44aaea3be9
