@@ -1,2 +1,0 @@
-ENTREE FICTIVE short aster:XDPUSDT a 0.02348 (spread 8.5 pb, glissement 1 k$ 4.26 pb, 5 k$ 13.99 pb)
-ENTREE ASTER ECARTEE XDPUSDT : cible 50 $ : part nulle ou sous l'ordre minimum sur ce compte (plafonds atteints), pas d'ordre
