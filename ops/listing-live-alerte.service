@@ -1,0 +1,15 @@
+# A INSTALLER avec ops/listing-live-memoire.conf : /etc/systemd/system/listing-live-alerte.service (sans [Install] : lancee par OnFailure= seulement).
+# Un passage tue (OOM du noyau ou du cgroup, OOMPolicy=stop par defaut ; delai TimeoutStartSec=600 ; signal) n'execute ni notify.py ni le ping
+# healthchecks, et un seul passage manque (30 min sans ping) reste sous la grace de 35 min : sans cette unite, rien ne previent.
+# MONITOR_* : systemd >= 251 (Ubuntu 24.04 : 255). A verifier sur le VPS : systemd-analyze verify, puis un essai (systemctl start listing-live-alerte).
+[Unit]
+Description=Alerte Telegram : passage listing-live interrompu (OOM, delai, signal)
+
+[Service]
+Type=oneshot
+User=listing
+Group=listing
+WorkingDirectory=/opt/listing-live/repo
+PrivateTmp=yes
+MemoryMax=64M
+ExecStart=/bin/sh -c 'echo "URGENT : passage listing-live interrompu ($$MONITOR_SERVICE_RESULT $$MONITOR_EXIT_CODE $$MONITOR_EXIT_STATUS). Journal peut-etre en retard sur le compte : verifier positions et stops a la main, live/STOP si besoin" > /tmp/alerte.txt && exec /opt/listing-live/venv/bin/python ops/notify.py /tmp/alerte.txt'
