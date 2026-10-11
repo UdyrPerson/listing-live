@@ -102,6 +102,14 @@ class Broker:
             for o in self.x.fetch_open_orders(self.sym[coin]):
                 self.x.cancel_order(o["id"], self.sym[coin])
 
+    def buys_since(self, coin, since):
+        """Achats executes sur `coin` depuis `since` (s) -> (quantite, prix moyen, heure de la derniere execution), ou None. Chiffre une position
+        rachetee hors du programme (stop sur le mark, ADL, liquidation, passage interrompu)."""
+        fills = [f for f in requests.post(INFO, json={"type": "userFillsByTime", "user": self.account, "startTime": int(since) * 1000}, timeout=30).json()
+                 if f["coin"] == coin and f["side"] == "B"]
+        qty = sum(float(f["sz"]) for f in fills)
+        return (qty, sum(float(f["sz"]) * float(f["px"]) for f in fills) / qty, max(int(f["time"]) for f in fills) // 1000) if qty else None
+
     def leverage(self, coin, lev):
         """Levier en marge croisee, plafonne par l'exchange. En croisee il ne fixe que la marge initiale bloquee ; la liquidation depend de la marge de maintenance."""
         if self.live:

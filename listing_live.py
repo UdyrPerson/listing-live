@@ -19,6 +19,7 @@ deux (ligne jumelle) : cible F x w x somme des capitaux, repartie pour egaliser 
 Regle : research/listing-strategy-v1.md (v1.1). Short a +36 h, 5 jours, stop +50 %, couverture = panier equipondere fixe HEDGE (hors coins shortes
 par ailleurs), beta 1. Pilote reel : short de F x capital x min(1, VOL_REF / vol 3 j), couverture au meme notionnel, short total <= MAX_SHORT x capital.
 """
+import calendar
 import csv
 import json
 import math
@@ -59,11 +60,18 @@ V11_FROM = 1791277200                          # 2026-10-06 09:00 UTC : la v1.1 
 STOPS_MAX, FUND_MIN, FLOOR_USD = (5, 30), -0.02, 100.0     # arrets durs : >= 5 stops sur les 30 derniers trades, funding moyen < -200 pb sur 20, compte < 100 $
 MAX_NEW_MARKETS = 8                # plus de 8 marches neufs d'un coup = etat perdu, pas 8 listings : on reamorce sans emettre
 KEY_WARN_DAYS = 14
+POP_OUT, POP_CHECK = "hors test : pas de perp Binance (suivi fictif seulement)", "a verifier : perp Binance"
+ERRATUM = {"upbit-CASHCAT-1790573232": POP_OUT, "bithumb-POD-1791273129": POP_OUT, "bithumb-CASHCAT-1791425763": POP_OUT, "bithumb-XDP-1791541897": POP_OUT,
+           "bithumb-CTR-1791435182": "hors test : non-evenement (KRW-CTR cote depuis le 2026-06-09)"}    # research/listing-erratum-2026-10-12.md
+OPEN_CHECK = ("upbit", "bithumb", "coinbase", "binance")        # lieux dont le marche annonce se lit en public (Robinhood : non)
+SILENCE_D = {"bithumb": 14, "upbit": 16, "coinbase": 28, "robinhood": 75, "binance": 90}   # p99 des ecarts entre annonces, 2025-2026 (jours)
+MUTE_H = (12, 48)                  # heures sans aucun message d'un fil qui declenchent une alerte
 A_COLS = ["ts", "venue", "market", "ticker", "n_tickers", "head", "source"]
 R_COLS = ["real", "r_size", "r_px_in", "r_stop", "r_legs", "r_px_out", "r_legs_out", "r_net_usd", "r_note", "r_out"]     # r_out : [quantite rachetee, prix moyen] du short
 J_COLS = ["id", "t_ann", "venue", "ticker", "exch", "coin", "status", "note", "entry_ts", "exit_ts", "t_in", "bid", "ask", "spread_bp", "px_in", "slip_1k_bp", "slip_5k_bp",
           "funding_in", "day_vol_musd", "legs", "legs_px_in", "t_out", "px_out", "funding_sum", "legs_px_out", "legs_funding", "short_net", "hedge_net", "net_hedged"] + R_COLS + [
-          "market", "vol3d", "twin"]                   # vol3d : vol journaliere des 3 j avant l'annonce ; twin : id de la ligne principale d'une ligne jumelle
+          "market", "vol3d", "twin", "pop", "t_open"]  # vol3d : vol journaliere des 3 j avant l'annonce ; twin : id de la ligne principale d'une ligne jumelle ;
+                                                       # pop : vide = population du test, sinon raison de l'exclusion ; t_open : 1re bougie horaire du marche sur le lieu
 
 
 # ---------------------------------------------------------------- fonctions pures
@@ -144,8 +152,9 @@ def sprt(values):
 
 def v1_closed(journal, since=0):
     """Trades fictifs clos de la regle v1 (hors suivi des listings de perp, autre regle) entres depuis `since`, dans l'ordre des sorties."""
-    return sorted((x for x in journal if x["net_hedged"] != "" and x.get("market") != "perp" and not x.get("twin") and int(x["t_in"] or 0) >= since),
-                  key=lambda x: int(x["t_out"]))                    # une ligne jumelle (meme signal, autre exchange) n'est jamais comptee deux fois
+    return sorted((x for x in journal if x["net_hedged"] != "" and x.get("market") != "perp" and not x.get("twin") and int(x["t_in"] or 0) >= since
+                   and not x.get("pop") and x.get("id") not in ERRATUM), key=lambda x: int(x["t_out"]))   # une ligne jumelle n'est jamais comptee deux fois ;
+                                                                    # hors population ou non-evenement : ni test ni arret dur (erratum du 2026-10-12)
 
 
 def sprt_v11(journal):
@@ -168,6 +177,33 @@ def hard_stops(journal, values=None):
         if v is not None and v < FLOOR_USD:
             why.append(f"compte {ex} a {v:.2f} $, sous le plancher de {FLOOR_USD:.0f} $")
     return why
+
+
+def open_verdict(venue, first, t_ann):
+    """1re bougie horaire du marche annonce sur son lieu (ou None) -> (ok, raison). Erratum v1.1 du 2026-10-12, regle 2 : un marche qui traitait plus
+    de 24 h avant l'annonce n'est pas un listing ; un listing KRW dont le marche n'a pas ouvert a l'entree n'est pas confirme."""
+    if first is None:
+        return (False, "non-evenement : marche KRW non ouvert a l'entree (annonce non confirmee)") if venue in ("upbit", "bithumb") else (True, "")
+    if first <= t_ann - 86400:
+        return False, "non-evenement : marche deja cote plus de 24 h avant l'annonce"
+    return True, ""
+
+
+def rh_new(seen, cur):
+    """{id: [code, negociabilite]} avant / apres -> [(code, "nouvelle" | "retour")] des paires Robinhood devenues negociables (un renommage garde l'id)."""
+    return [(c, "nouvelle" if i not in seen else "retour") for i, (c, tr) in cur.items() if tr == "tradable" and seen.get(i, ["", ""])[1] != "tradable"]
+
+
+def aster_alert(row, held):
+    """Annonce officielle d'Aster -> texte d'alerte, ou None : radiations (preavis parfois < 1 h), marge, levier, API, maintenance, et toute annonce qui
+    cite un coin detenu (held = bases des positions Aster ouvertes)."""
+    title, cat = row["title"].strip(), row.get("category", "")
+    mine = [h for h in sorted(held) if re.search(rf"\b{re.escape(h)}(USDT)?\b", title.upper())]
+    if mine:
+        return f"URGENT : ANNONCE ASTER SUR UNE POSITION ({', '.join(mine)}) : {title}"
+    if cat == "DELISTING" or re.search(r"delist|maintenance|upgrade|\bapi\b|margin|leverage|suspend|settle", title, re.I):
+        return f"ANNONCE ASTER : {title}"
+    return None
 
 
 def allocate(target, accounts):
@@ -249,30 +285,30 @@ def aster(path, **params):
 
 def aster_symbols():
     """Perps Aster negociables ET crypto : actions, ETF, matieres premieres (METAUSDT = l'action Meta, PAXGUSDT...) exclus (listing_feed.aster_crypto)."""
-    return [s["symbol"] for s in aster("/fapi/v1/exchangeInfo")["symbols"] if s.get("status") == "TRADING" and lf.aster_crypto(s)]
+    return [s["symbol"] for s in aster("/fapi/v3/exchangeInfo")["symbols"] if s.get("status") == "TRADING" and lf.aster_crypto(s)]
 
 
 def aster_prices():
     """Dernier prix de chaque perp Aster -> {symbole: {"midPx": prix}} : meme forme que le contexte Hyperliquid, pour price()."""
-    return {x["symbol"]: {"midPx": x["price"]} for x in aster("/fapi/v1/ticker/price")}
+    return {x["symbol"]: {"midPx": x["price"]} for x in aster("/fapi/v3/ticker/price")}
 
 
 def candles(exch, coin, start, end):
     """Bougies 5 m [{t, T (ms), o, h, c}] : meme forme pour les deux exchanges."""
     if exch == "aster":
-        return [{"t": r[0], "T": r[6], "o": r[1], "h": r[2], "c": r[4]} for r in aster("/fapi/v1/klines", symbol=coin, interval="5m", startTime=start * 1000, endTime=end * 1000, limit=1500)]
+        return [{"t": r[0], "T": r[6], "o": r[1], "h": r[2], "c": r[4]} for r in aster("/fapi/v3/klines", symbol=coin, interval="5m", startTime=start * 1000, endTime=end * 1000, limit=1500)]
     return info({"type": "candleSnapshot", "req": {"coin": coin, "interval": "5m", "startTime": start * 1000, "endTime": end * 1000}})
 
 
 def funding_sum(exch, coin, start, end):
     if exch == "aster":
-        return sum(float(x["fundingRate"]) for x in aster("/fapi/v1/fundingRate", symbol=coin, startTime=start * 1000, endTime=end * 1000, limit=1000))
+        return sum(float(x["fundingRate"]) for x in aster("/fapi/v3/fundingRate", symbol=coin, startTime=start * 1000, endTime=end * 1000, limit=1000))
     return sum(float(x["fundingRate"]) for x in info({"type": "fundingHistory", "coin": coin, "startTime": start * 1000, "endTime": end * 1000}))
 
 
 def book_snapshot(exch, coin):
     if exch == "aster":
-        d = aster("/fapi/v1/depth", symbol=coin, limit=100)
+        d = aster("/fapi/v3/depth", symbol=coin, limit=100)
         b = [[{"px": p, "sz": q} for p, q in d["bids"]], [{"px": p, "sz": q} for p, q in d["asks"]]]
     else:
         b = info({"type": "l2Book", "coin": coin})["levels"]
@@ -280,6 +316,101 @@ def book_snapshot(exch, coin):
     mid = (bid + ask) / 2
     return {"bid": bid, "ask": ask, "mid": mid, "spread_bp": (ask - bid) / mid * 1e4,
             "sell": [exec_price(b[0], s) for s in SIZES], "buy": [exec_price(b[1], s) for s in SIZES]}      # un short vend : il consomme les acheteurs
+
+
+def binance_perp(tick, t):
+    """Perp USDT-M Binance du coin (prefixes de lot compris) avec >= 800 bougies 5 m dans les 3 jours avant t : population du backtest (erratum
+    v1.1, regle 1) -> True / False, ou None si Binance ne repond pas."""
+    unknown = False
+    for p in ("", "1000", "1000000", "1M"):
+        try:
+            r = requests.get("https://fapi.binance.com/fapi/v1/klines", params={"symbol": f"{p}{tick}USDT", "interval": "5m", "startTime": (t - 3 * 86400) * 1000,
+                                                                              "endTime": t * 1000, "limit": 1000}, timeout=30)
+        except requests.RequestException:
+            unknown = True
+            continue
+        if r.status_code == 200 and len(r.json()) >= 800:
+            return True
+        unknown |= r.status_code not in (200, 400)                  # 400 = symbole inconnu
+    return None if unknown else False
+
+
+def venue_open(venue, tick, t_ann, now):
+    """1re bougie horaire du marche annonce sur son lieu dans [t_ann - 48 h, now] -> heure (s), ou None si ce marche n'existe pas (encore). Une bougie
+    des le debut de la fenetre = marche deja cote avant l'annonce. Leve une erreur si le lieu ne repond pas."""
+    start = t_ann - 48 * 3600
+    if venue in ("upbit", "bithumb"):
+        r = requests.get(f"https://api.{venue}.com/v1/candles/minutes/60", params={"market": f"KRW-{tick}", "count": 200}, timeout=30)
+        if r.status_code == 404 or (r.status_code == 200 and isinstance(r.json(), dict)):     # Bithumb : 200 + {"error"} pour un marche inconnu
+            return None
+        r.raise_for_status()
+        ts = [calendar.timegm(time.strptime(c["candle_date_time_utc"], "%Y-%m-%dT%H:%M:%S")) for c in r.json()]
+    elif venue == "coinbase":
+        iso = lambda x: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(x))
+        r = requests.get(f"https://api.exchange.coinbase.com/products/{tick}-USD/candles", params={"granularity": 3600, "start": iso(start), "end": iso(now)}, timeout=30)
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        ts = [c[0] for c in r.json()]
+    elif venue == "binance":
+        r = requests.get("https://data-api.binance.vision/api/v3/klines", params={"symbol": f"{tick}USDT", "interval": "1h", "startTime": start * 1000, "limit": 1000}, timeout=30)
+        if r.status_code == 400:
+            return None
+        r.raise_for_status()
+        ts = [c[0] // 1000 for c in r.json()]
+    else:
+        raise ValueError(f"pas de donnees publiques pour {venue}")
+    ts = [x for x in ts if x >= start]
+    return min(ts) if ts else None
+
+
+def gone_fill(broker, coin, since):
+    """Position reelle disparue (stop sur le mark, ADL, liquidation, radiation, passage tue) -> (quantite, prix moyen, heure) de ses rachats lus sur
+    l'exchange depuis `since`, ou None : jamais un stop a +50 % suppose (erratum v1.1, regle 3)."""
+    try:
+        return broker.buys_since(coin, since)
+    except Exception:
+        return None
+
+
+def robinhood_shadow(now, alerts):
+    """Mode OMBRE (registre du 2026-10-12) : paires Robinhood devenues negociables d'apres la liste officielle -> live/robinhood_shadow.csv et alerte,
+    SANS signal ni ordre. Premier passage = amorce."""
+    path = LIVE / "robinhood_pairs.json"
+    seen = json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+    pairs = requests.get("https://nummus.robinhood.com/currency_pairs/", headers=lf.UA, timeout=30).json()["results"]
+    cur = {p["id"]: [p["asset_currency"]["code"], p["tradability"]] for p in pairs if not p.get("is_stablecoin")}
+    new = rh_new(seen, cur) if seen is not None else []
+    if len(new) > MAX_NEW_MARKETS:                                   # trop d'un coup = maintenance ou etat perdu, pas des listings
+        alerts.append(f"liste Robinhood : {len(new)} paires negociables d'un coup, ignorees (ombre)")
+        new = []
+    with open(LIVE / "robinhood_shadow.csv", "a", encoding="utf-8") as f:
+        f.writelines(f"{now},{c},{kind}\n" for c, kind in new)
+    alerts.extend(f"OMBRE ROBINHOOD : {c} negociable ({kind}) -- mesure seulement, aucun signal" for c, kind in new)
+    path.write_text(json.dumps(cur), encoding="utf-8")
+
+
+def aster_notices(alerts, held):
+    """Annonces officielles d'Aster parues depuis le passage precedent -> alertes (aster_alert). Premier passage = amorce."""
+    path = LIVE / "aster_notices.json"
+    last = json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+    rows = requests.post("https://www.asterdex.com/bapi/composite/v1/public/composite/ae/announcement/search", json={"page": 1, "size": 20},
+                         headers=lf.UA, timeout=30).json()["data"]["rows"]
+    if last is not None:
+        alerts.extend(a for r in sorted(rows, key=lambda r: int(r["id"])) if int(r["id"]) > last and (a := aster_alert(r, held)))
+    path.write_text(json.dumps(max([int(r["id"]) for r in rows] + [last or 0])), encoding="utf-8")
+
+
+def silence(now, anns, alerts):
+    """Aucune annonce d'un lieu depuis plus que son p99 historique : captation peut-etre en panne silencieuse -> alerte, une fois (fenetre d'un passage)."""
+    last = {}
+    for r in anns:
+        if (r[1], r[2]) in VENUES and r[2] != "perp":
+            last[r[1]] = max(last.get(r[1], 0), r[0])
+    for v, d in SILENCE_D.items():                                  # ponytail: fenetre de 15 min, un passage en retard peut sauter l'alerte
+        gap = now - last.get(v, now)
+        if d * 86400 < gap <= d * 86400 + 900:
+            alerts.append(f"AUCUNE ANNONCE {v} DEPUIS {gap / 86400:.0f} JOURS (p99 historique {d} j) : verifier la captation")
 
 
 def collect(now, alerts):
@@ -349,6 +480,8 @@ def collect(now, alerts):
             out, before = [], None
             for _ in range(15):
                 page = lf.wire_page(channel, before)
+                if before is None and page:                         # dernier message du fil : sa vivacite, pas seulement ses pannes
+                    health[f"vu {channel}"] = max(p[1] for p in page)
                 for _, ts, text in page:
                     got = lf.parse_wire(text)
                     if got:
@@ -366,6 +499,9 @@ def collect(now, alerts):
     source("bithumb", bithumb)          # API officielle : 5 derniers avis seulement, donc redondante avec les fils, pas un remplacement
     for c in lf.WIRES:
         source(c, wire(c))
+        gap = now - health.get(f"vu {c}", now)
+        if any(h * 3600 < gap <= h * 3600 + 900 for h in MUTE_H):
+            alerts.append(f"FIL MUET {c} : aucun message depuis {gap / 3600:.0f} h")
     LIVE.mkdir(exist_ok=True)
     health_path.write_text(json.dumps(health), encoding="utf-8")
     return [r for r in rows if (r[1], r[2]) in VENUES and r[0] > now - 7 * 86400]
@@ -383,10 +519,22 @@ def read(name, cols):
 
 def write(name, cols, rows):
     LIVE.mkdir(exist_ok=True)
-    with open(LIVE / name, "w", encoding="utf-8", newline="") as f:
+    tmp = LIVE / (name + ".tmp")
+    with open(tmp, "w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols)
         w.writeheader()
         w.writerows(rows)
+    tmp.replace(LIVE / name)                                        # atomique : un passage tue pendant l'ecriture laisse l'ancien fichier entier
+
+
+SAVE = None                                                         # pose par main() : ecrit l'etat apres chaque ordre accepte
+
+
+def checkpoint():
+    """Un passage tue (OOM, delai de systemd, redemarrage) juste apres un ordre laisse un journal a jour : le passage suivant repose le stop,
+    ne rentre pas une 2e fois, ne revend pas la couverture d'une autre ligne. Reste une fenetre de la duree d'un aller-retour HTTP."""
+    if SAVE:
+        SAVE()
 
 
 # ---------------------------------------------------------------- ordres du pilote (Hyperliquid seulement)
@@ -430,8 +578,10 @@ def real_enter(j, snap, ctx, broker, journal, alerts, cands=None, target=None):
         alerts.append(f"ENTREE {mode.upper()} EN ECHEC {coin} : {e}")
         return
     j |= {"real": mode, "r_size": size, "r_px_in": px}
+    checkpoint()
     try:
         j["r_stop"] = broker.stop(coin, size, px * (1 + STOP))
+        checkpoint()
     except Exception as e:
         alerts.append(f"URGENT : STOP NON POSE sur {coin} ({e}) -> nouvelle tentative au prochain passage")
     cands = json.loads(j["legs"]) if cands is None else cands       # deja hors coins shortes
@@ -451,6 +601,8 @@ def real_enter(j, snap, ctx, broker, journal, alerts, cands=None, target=None):
             broker.leverage(c, LEV_HEDGE)
             lsize, lpx = broker.market(c, "buy", want, ref)
             legs.append([c, lsize, lpx])
+            j["r_legs"] = json.dumps(legs)
+            checkpoint()
             left -= lsize * lpx
         except Exception as e:
             alerts.append(f"COUVERTURE INCOMPLETE {c} : {e}")
@@ -471,14 +623,17 @@ def real_exit(j, ctx, broker, positions, alerts):
             done = json.loads(j["r_out"] or "[0, 0]")
             stop_px = px_in * (1 + STOP) * 1.005
             complete = done[0] >= size - 1e-9                       # tout rachete a un passage precedent (puis echec avant l'ecriture du prix)
-            if not complete and broker.live and coin not in positions:      # le stop de l'exchange a rachete (le reste)
-                j |= {"r_px_out": (done[0] * done[1] + (size - done[0]) * stop_px) / size, "r_note": "rachete par le stop de l'exchange (prix estime)"}
+            if not complete and broker.live and coin not in positions:      # rachete hors du programme : stop, ADL, liquidation, radiation, passage tue
+                fill = gone_fill(broker, coin, int(j["t_in"]))      # ponytail: la moyenne lue inclut un eventuel rachat partiel du programme
+                j |= {"r_px_out": (done[0] * done[1] + (size - done[0]) * (fill[1] if fill else stop_px)) / size,
+                      "r_note": "rachete hors du programme : " + ("prix lu sur l'exchange" if fill else "prix estime au stop, A VERIFIER")}
             else:
                 left = 0.0 if complete else -positions.get(coin, 0.0) if broker.live else size - done[0]
                 if left > 1e-12:
                     filled, px = broker.market(coin, "buy", round(left, 10), book_snapshot(j["exch"], coin)["ask"], reduce=True)
                     done = [done[0] + filled, (done[0] * done[1] + filled * px) / (done[0] + filled)]
                     j["r_out"] = json.dumps(done)
+                    checkpoint()
                     if filled < left - 1e-9:
                         raise RuntimeError(f"rachat partiel ({done[0]:g} sur {size:g}) : stop maintenu, suite au prochain passage")
                 broker.cancel_all(coin)
@@ -494,6 +649,7 @@ def real_exit(j, ctx, broker, positions, alerts):
                 filled, px = broker.market(c, "sell", round(lsize - q0, 10), price(ctx, c, lpx), reduce=True)
                 sold[c] = [c, ((sold[c][1] * q0 if c in sold else 0.0) + px * filled) / (q0 + filled), q0 + filled]
             j["r_legs_out"] = json.dumps(list(sold.values()))
+            checkpoint()
             if done_qty(sold[c], lsize) < lsize - 1e-9:
                 raise RuntimeError(f"vente partielle de {c} ({done_qty(sold[c], lsize):g} sur {lsize:g}), suite au prochain passage")
         px_out, out, t_in, t_out = float(j["r_px_out"]), {c: float(x[1]) for c, x in sold.items()}, int(j["t_in"]), int(j["t_out"])
@@ -524,6 +680,10 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
                 alerts.append(f"COMPTE {ex.upper()} ILLISIBLE ({type(e).__name__}) : aucun ordre sur cet exchange a ce passage")
                 del brokers[ex]
     fam = lambda x: x.get("market") == "perp"                       # deux familles independantes : un suivi fictif de perp ne bloque jamais un signal spot reel
+    for j in journal:                                               # erratum v1.1 du 2026-10-12 : la raison est inscrite dans le journal
+        why = ERRATUM.get(j["id"]) or ERRATUM.get(j["twin"])
+        if why and not j["pop"]:
+            j["pop"] = why
     busy = {(fam(j), j["ticker"]) for j in journal if j["status"] in ("signal", "ouvert")}
     for a in new_ann:                                               # 1. nouvelles annonces -> signal ou ineligible
         t, tick, perp = int(a["ts"]), a["ticker"].upper(), a.get("market") == "perp"
@@ -548,6 +708,9 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
                 ok, why = True, f"eligibilite a verifier a l'entree ({type(e).__name__})"
             j |= {"status": "signal" if ok else "ineligible", "note": why}
             j["note"] = why or ("listing de perp : suivi fictif seulement (spec 18)" if perp else "")
+            if ok and not perp:                                     # population du backtest : perp Binance (erratum v1.1, regle 1)
+                bp = binance_perp(tick, t)
+                j["pop"] = "" if bp else POP_OUT if bp is False else POP_CHECK
             busy |= {(perp, tick)} if ok else set()
         journal.append(j)
         a_c, also = (aster_syms or {}).get(tick), ""
@@ -562,10 +725,23 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
             tw |= {"status": "signal" if ok else "ineligible", "note": why}
             journal.append(tw)
             also = f" et aster:{a_c}" if ok else f" (Aster ecarte : {why})"
-        alerts.append(f"ANNONCE {a['venue']} {tick} -> {j['status']} {j['note']}" + (f" | entree prevue {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(entry))} sur {exch}:{coin}{also}" if j["status"] == "signal" else ""))
+        alerts.append(f"ANNONCE {a['venue']} {tick} -> {j['status']} {j['note']}" + (f" [{j['pop']}]" if j["pop"] else "") + (f" | entree prevue {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(entry))} sur {exch}:{coin}{also}" if j["status"] == "signal" else ""))
     def paper_enter(j):
         """Entree fictive d'une ligne -> (carnet, lignes de couverture), ou None si elle est reportee ou ecartee. Une ligne en erreur ne bloque pas les autres."""
         try:
+            if not fam(j) and j["venue"] in OPEN_CHECK and j["t_open"] == "":     # erratum v1.1, regle 2 : le marche annonce existe-t-il vraiment ?
+                try:
+                    first = venue_open(j["venue"], j["ticker"], int(j["t_ann"]), now)
+                except Exception as e:
+                    first = False
+                    alerts.append(f"GARDE DU MARCHE NON VERIFIE {j['venue']}:{j['ticker']} ({type(e).__name__}) : entree sans ce controle")
+                if first is not False:
+                    ok, why = open_verdict(j["venue"], first, int(j["t_ann"]))
+                    if not ok:
+                        j |= {"status": "ineligible", "note": why}
+                        alerts.append(f"SIGNAL ECARTE A L'ENTREE {j['exch']}:{j['coin']} : {why}")
+                        return None
+                    j["t_open"] = first or ""
             if j["note"].startswith("eligibilite a verifier"):
                 t = int(j["t_ann"])
                 cs = candles(j["exch"], j["coin"], t - 3 * 86400, t)
@@ -621,7 +797,14 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
                 alerts.append(f"ENTREE MANQUEE {x['exch']}:{x['coin']}")
             continue
         entered = [(x, *r) for x in group if (r := paper_enter(x))]
-        real = [(x, s, legs) for x, s, legs in entered if brokers.get(x["exch"]) and not fam(x)]   # un listing de perp n'est PAS la regle v1 : aucun ordre reel
+        for x, _, _ in entered:
+            if x["pop"] == POP_CHECK:                               # Binance ne repondait pas a l'annonce : nouvel essai avant tout ordre reel
+                bp = binance_perp(x["ticker"], int(x["t_ann"]))
+                x["pop"] = "" if bp else POP_OUT if bp is False else POP_CHECK
+            if x["pop"] and brokers.get(x["exch"]) and not fam(x):
+                x["r_note"] = f"{x['pop']} : pas d'ordre reel"
+                alerts.append(f"ENTREE {x['exch'].upper()} ECARTEE {x['coin']} : {x['r_note']}")
+        real = [(x, s, legs) for x, s, legs in entered if brokers.get(x["exch"]) and not fam(x) and not x["pop"]]   # perp listing ou hors population : fictif
         if not real:
             continue
         try:
@@ -660,8 +843,15 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
             gone = held and j["coin"] not in pos                    # le stop de l'exchange a rachete : la couverture ne doit pas rester seule
             if hit is None and not gone and now < int(j["exit_ts"]):
                 continue
-            if hit is None and gone:
-                t_out, px_out, status = now, px_in * (1 + STOP) * 1.005, "stoppe"
+            if hit is None and gone:                                # erratum v1.1, regle 3 : le vrai prix, ou la ligne sort du test
+                fill = gone_fill(brokers[j["exch"]], j["coin"], t_in)
+                if fill:
+                    t_out, px_out = fill[2], fill[1]
+                    status = "stoppe" if px_out >= px_in * (1 + STOP) * 0.98 else "clos"
+                else:
+                    t_out, px_out, status = now, px_in * (1 + STOP) * 1.005, "stoppe"
+                    j["pop"] = "a verifier : position disparue, prix de sortie estime"
+                    alerts.append(f"URGENT : POSITION {j['exch']}:{j['coin']} DISPARUE SANS EXECUTION LISIBLE -> ligne hors test, prix a verifier a la main")
             elif hit:
                 t_out, px_out, status = hit["T"] // 1000, max(float(hit["o"]), px_in * (1 + STOP)) * 1.005, "stoppe"
             else:
@@ -685,7 +875,7 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
                       f"test sequentiel (v1.1, pondere) : n {n}, S {S:+.3f}, bornes [{SPRT_DRIFT * n - SPRT_BOUND:+.2f} ; {SPRT_DRIFT * n + SPRT_BOUND:+.2f}] -> {verdict}")
     for j in journal:                                               # 3 bis. nouvel essai d'une entree reelle en echec, tant que la fenetre LATE_S est ouverte
         b = brokers.get(j["exch"])                                  # APRES l'etape 3 : une position ouverte ici n'est jamais examinee dans ce passage
-        if not (b and j["status"] == "ouvert" and j["r_size"] == "" and j["r_note"].startswith("entree en echec") and not fam(j)
+        if not (b and j["status"] == "ouvert" and j["r_size"] == "" and j["r_note"].startswith("entree en echec") and not fam(j) and not j["pop"]
                 and int(j["t_in"]) < now <= int(j["entry_ts"]) + LATE_S):
             continue
         try:
@@ -732,6 +922,8 @@ def main():
         actx = {}
     journal = read("journal.csv", J_COLS)
     first_run = not (LIVE / "announcements.csv").exists()
+    global SAVE                                                                 # annonces ET journal : les signaux crees a ce passage restent lies a leur annonce
+    SAVE = lambda: (write("announcements.csv", A_COLS, [dict(zip(A_COLS, r)) for r in merged]), write("journal.csv", J_COLS, journal))
     brokers = {}
     for ex, mod, fn in (("hl", "listing_broker", "connect"), ("aster", "listing_broker_aster", "connect_aster")):
         try:
@@ -762,6 +954,16 @@ def main():
     if len(values) == 2 and time.gmtime(now).tm_hour == 0 and max(values.values()) / sum(values.values()) > BALANCE_ALERT:
         alerts.append("COLLATERAL DESEQUILIBRE : " + ", ".join(f"{ex} {v:.0f} $" for ex, v in values.items()) +
                       f" (plus de {BALANCE_ALERT:.0%} sur un compte) -> transfert manuel conseille, les cles du pilote ne peuvent rien retirer")
+    if time.gmtime(now).tm_min < 15:                                            # une fois par heure (passages a :07)
+        try:
+            robinhood_shadow(now, alerts)
+        except Exception as e:
+            print(f"liste Robinhood illisible ({type(e).__name__})")
+    try:
+        aster_notices(alerts, {re.sub(r"USDT$", "", j["coin"]) for j in journal if j["exch"] == "aster" and j["r_size"] != "" and j["r_net_usd"] == ""})
+    except Exception as e:
+        print(f"annonces Aster illisibles ({type(e).__name__})")
+    silence(now, merged, alerts)
     why = hard_stops(journal, values)
     if why and not (LIVE / "STOP").exists():
         (LIVE / "STOP").write_text(f"arret dur du {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(now))} : " + " ; ".join(why) + "\n", encoding="utf-8")
@@ -774,7 +976,7 @@ def main():
 
 
 def _selftest():
-    global book_snapshot, candles, funding_sum
+    global book_snapshot, candles, funding_sum, SAVE, binance_perp, venue_open
     assert schedule(1000000000) == (1000000000 + DELAY_S + 200 + 300, 1000000000 + DELAY_S + 500 + HOLD_S)         # 1e9 + 36 h n'est pas sur une bougie : arrondi au-dessus
     j0 = {c: "" for c in J_COLS} | {"id": "x", "ticker": "Z", "exch": "hl", "coin": "Z", "status": "signal", "entry_ts": 1000, "exit_ts": 1000 + HOLD_S, "t_ann": 0}
     assert j0["exit_ts"] - j0["entry_ts"] == HOLD_S
@@ -811,6 +1013,16 @@ def _selftest():
     assert sprt_v11([closed(i, net=-0.5) | {"t_in": V11_FROM} for i in range(9)])[2] == "ARRET"
     assert hard_stops(base + [closed(100, "stoppe", -0.9, market="perp")]) == []               # la famille perp n'entre ni dans le test ni dans les arrets
     assert "funding" in hard_stops([closed(i, fund=-0.03) for i in range(20)])[0] and "aster" in hard_stops(base, {"hl": 150.0, "aster": 99.0})[0]
+    assert open_verdict("bithumb", None, t)[0] is False and "non ouvert" in open_verdict("upbit", None, t)[1] and open_verdict("coinbase", None, t) == (True, "")
+    assert open_verdict("bithumb", t - 86400, t)[0] is False and open_verdict("upbit", t - 86399, t) == (True, "")            # CTR : cote 4 mois avant le fil
+    assert rh_new({"a": ["X", "untradable"], "b": ["TON", "tradable"]}, {"a": ["X", "tradable"], "b": ["GRAM", "tradable"], "c": ["NEW", "tradable"],
+                  "d": ["OFF", "untradable"]}) == [("X", "retour"), ("NEW", "nouvelle")]                               # GRAM = renommage de TON : rien
+    assert aster_alert({"title": "[Delisting Notice] FOOUSDT Perpetual", "category": "DELISTING"}, set()).startswith("ANNONCE ASTER")
+    assert aster_alert({"title": "New Perp Listing: $AIA(5x)", "category": "NEW_LISTING"}, {"AIA"}).startswith("URGENT")
+    assert aster_alert({"title": "RLCUSDT Funding Interval Update", "category": "UPDATES"}, {"AIA"}) is None
+    assert sprt_v11([closed(i, net=-0.5) | {"t_in": V11_FROM, "pop": POP_OUT} for i in range(9)])[2] == "en cours"           # hors population : hors test
+    assert sprt_v11([closed(i, net=-0.5) | {"t_in": V11_FROM, "id": "bithumb-CTR-1791435182"} for i in range(9)])[2] == "en cours"   # erratum
+    binance_perp, venue_open = (lambda tick, t: True), (lambda venue, tick, t_ann, now: t_ann + 3600)       # sans reseau
     journal, alerts = [], []                                                                      # machine a etats, sans reseau
     step(t, journal, [{"ts": t - 3600, "venue": "upbit", "ticker": "ZAMA"}], alerts, uni, {"XYZ": "XYZUSDT"})
     assert journal[0]["status"] == "ineligible" and "Aster" in journal[0]["note"]
@@ -888,7 +1100,36 @@ def _selftest():
     assert s2["r_stop"].startswith("stop@") and any("STOP REPOSE" in x for x in a2)
     del b2.pos["SUI"]                                                                             # le stop de l'exchange a rachete le short
     step(t + 7260, j2, [], a2, ctx2, {}, b2)
-    assert s2["status"] == "stoppe" and "stop de l'exchange" in s2["r_note"] and sum(x[:2] == ("SUI", "buy") for x in b2.sent) == 0 and b2.pos == {} and s2["r_net_usd"] != ""
+    assert s2["status"] == "stoppe" and "A VERIFIER" in s2["r_note"] and s2["pop"].startswith("a verifier") and sum(x[:2] == ("SUI", "buy") for x in b2.sent) == 0 and b2.pos == {} and s2["r_net_usd"] != ""
+    assert v1_closed(j2) == []                                                                    # prix suppose : hors test tant qu'il n'est pas verifie
+    b6 = Fake(live=True)                                                                          # position disparue, rachat lu sur l'exchange
+    s6 = dict(sig) | {c: "" for c in R_COLS} | {"status": "signal", "t_in": "", "net_hedged": ""}
+    step(t + 60, [s6], [], [], ctx2, {}, b6)
+    del b6.pos["SUI"]
+    b6.buys_since = lambda coin, since: (75.0, 1.2, t + 5000)                                     # ADL ou stop sur le mark a 1,2 : pas un stop a +50 %
+    step(t + 7260, [s6], [], [], ctx2, {}, b6)
+    assert s6["status"] == "clos" and s6["px_out"] == 1.2 and s6["t_out"] == t + 5000 and s6["pop"] == "" and s6["r_px_out"] == 1.2 and "prix lu" in s6["r_note"]
+    bo, one = Fake(live=True), candles                                                            # signal hors population : fictif seulement, aucun ordre
+    candles = lambda exch, coin, a, b: [{"t": (b - 3 * 86400 + 300 * i) * 1000, "T": (b - 3 * 86400 + 300 * i + 300) * 1000, "o": "1", "h": "1.001",
+                                         "c": "1.001" if i % 2 else "0.999"} for i in range(864)]     # perp preexistant : eligible
+    binance_perp = lambda tick, t: False
+    jo = []
+    step(t + 60, jo, [{"ts": t - DELAY_S, "venue": "binance", "market": "spot", "ticker": "SUI"}], [], ctx2, {}, bo)
+    assert jo[0]["status"] == "signal" and jo[0]["pop"] == POP_OUT
+    step(int(jo[0]["entry_ts"]), jo, [], [], ctx2, {}, bo)
+    assert jo[0]["status"] == "ouvert" and jo[0]["r_size"] == "" and bo.sent == [] and "pas d'ordre reel" in jo[0]["r_note"]
+    binance_perp = lambda tick, t: True
+    venue_open = lambda venue, tick, t_ann, now: t_ann - 4 * 86400                                # marche deja cote : non-evenement, rien n'entre
+    jk = []
+    step(t + 60, jk, [{"ts": t - DELAY_S, "venue": "bithumb", "market": "spot_krw", "ticker": "SUI"}], [], ctx2, {}, Fake(live=True))
+    step(int(jk[0]["entry_ts"]), jk, [], [], ctx2, {}, Fake(live=True))
+    assert jk[0]["status"] == "ineligible" and "deja cote" in jk[0]["note"]
+    venue_open, candles = (lambda venue, tick, t_ann, now: t_ann + 3600), one
+    sv, saved = dict(sig) | {c: "" for c in R_COLS} | {"status": "signal", "t_in": "", "net_hedged": ""}, []   # point de reprise apres CHAQUE ordre accepte
+    SAVE = lambda: saved.append((sv["r_size"], sv["r_stop"], len(json.loads(sv["r_legs"] or "[]"))))
+    step(t + 60, [sv], [], [], ctx2, {}, Fake(live=True))
+    SAVE = None
+    assert saved == [(75.0, "", 0), (75.0, "stop@1.50", 0)] + [(75.0, "stop@1.50", k) for k in range(1, 5)], saved     # short, stop, 4 lignes
     b3 = Fake(live=True)                                                                          # listing de perp : fictif seulement, et ne bloque pas le spot du meme coin
     jp = [{c: "" for c in J_COLS} | {"id": "p", "ticker": "SUI", "exch": "hl", "coin": "SUI", "status": "signal", "entry_ts": t, "exit_ts": t + HOLD_S, "t_ann": t - DELAY_S, "market": "perp"}]
     step(t + 60, jp, [], [], ctx2, {}, b3)

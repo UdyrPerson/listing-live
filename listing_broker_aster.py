@@ -149,6 +149,13 @@ class AsterBroker:
             except Exception as e:
                 raise RuntimeError(f"annulation refusee ({why(e)})") from None
 
+    def buys_since(self, symbol, since):
+        """Achats executes sur `symbol` depuis `since` (s) -> (quantite, prix moyen, heure de la derniere execution), ou None (GET v3/userTrades, lecture).
+        Chiffre une position rachetee hors du programme (stop sur le mark, ADL, liquidation, radiation, passage interrompu)."""
+        b = [t for t in self.x.fapiPrivateGetV3UserTrades({"symbol": symbol, "startTime": int(since) * 1000, "limit": 1000}) if str(t.get("side")).upper() == "BUY"]
+        qty = sum(float(t["qty"]) for t in b)
+        return (qty, sum(float(t["qty"]) * float(t["price"]) for t in b) / qty, max(int(t["time"]) for t in b) // 1000) if qty else None
+
     def leverage(self, symbol, lev):
         """Marge CROISEE puis levier = min(lev, levier maximal des paliers du symbole). En croisee il ne fixe que la marge initiale bloquee."""
         if not self.live:
