@@ -20,3 +20,4 @@ ts,venue,market,ticker,n_tickers,head,source
 1791541897,bithumb,spot_krw,XDP,1,도플러 파이낸스(XDP) 원화 마켓 추가,bithumb_api
 1791772910,bithumb,spot_krw,ZEST,1,제스트프로토콜(ZEST) 원화 마켓 추가,bithumb_api
 1791780849,upbit,spot_krw,RSR,1,"리저브라이트(RSR) KRW, USDT 마켓 디지털 자산 추가",upbit_api
+1791795306,bithumb,spot_krw,KGEN,1,케이젠(KGEN) 원화 마켓 추가,bithumb_api
