@@ -58,6 +58,8 @@ def build(journal, eq, px, now, stop=False):
                 x["px_in"] = float(j["px_in"])
             if j["coin"] in p:
                 x["ret_bp"] = round((1 - p[j["coin"]] / x["px_in"]) * 1e4)
+            if j.get("r_t_out"):                                    # sortie reelle anticipee : la ligne ne suit plus que le fictif
+                x["real"], x["listing"] = False, x["listing"] + time.strftime(" (reel solde le %d/%m %H:%M)", time.gmtime(int(j["r_t_out"])))
             open_.append(x)
         elif j["net_hedged"] != "":
             closed.append(tag(j) | {"t_in": int(j["t_in"]), "t_out": int(j["t_out"]), "px_in": float(j["px_in"]), "px_out": float(j["px_out"]),

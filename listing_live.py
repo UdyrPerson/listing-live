@@ -14,6 +14,8 @@ deux (ligne jumelle) : cible F x w x somme des capitaux, repartie pour egaliser 
   health.json        nombre de passages rates de suite, par source
   markets.json       tickers en won cotes sur Upbit et Bithumb au dernier passage (detecteur de listing de secours)
   equity.csv         valeur du compte Hyperliquid a chaque passage (equity_aster.csv : compte Aster)
+  EXIT_EARLY         sorties REELLES anticipees demandees a la main : une ligne « id AAAA-MM-JJTHH:MMZ » (pas avant cette heure) ; short et
+                     couverture rachetes et vendus au passage suivant, la ligne FICTIVE continue jusqu'a sa sortie (le test sequentiel n'est pas touche)
   STOP               s'il existe, plus aucune entree reelle (les sorties continuent) : arret d'urgence, a creer a la main dans le depot, ou cree par un
                      arret dur (hard_stops) ; on le supprime a la main pour reprendre
 Regle : research/listing-strategy-v1.md (v1.1). Short a +36 h, 5 jours, stop +50 %, couverture = panier equipondere fixe HEDGE (hors coins shortes
@@ -70,7 +72,7 @@ A_COLS = ["ts", "venue", "market", "ticker", "n_tickers", "head", "source"]
 R_COLS = ["real", "r_size", "r_px_in", "r_stop", "r_legs", "r_px_out", "r_legs_out", "r_net_usd", "r_note", "r_out"]     # r_out : [quantite rachetee, prix moyen] du short
 J_COLS = ["id", "t_ann", "venue", "ticker", "exch", "coin", "status", "note", "entry_ts", "exit_ts", "t_in", "bid", "ask", "spread_bp", "px_in", "slip_1k_bp", "slip_5k_bp",
           "funding_in", "day_vol_musd", "legs", "legs_px_in", "t_out", "px_out", "funding_sum", "legs_px_out", "legs_funding", "short_net", "hedge_net", "net_hedged"] + R_COLS + [
-          "market", "vol3d", "twin", "pop", "t_open"]  # vol3d : vol journaliere des 3 j avant l'annonce ; twin : id de la ligne principale d'une ligne jumelle ;
+          "market", "vol3d", "twin", "pop", "t_open", "r_t_out"]  # r_t_out : heure d'une sortie reelle anticipee ; vol3d : vol journaliere des 3 j avant l'annonce ; twin : id de la ligne principale d'une ligne jumelle ;
                                                        # pop : vide = population du test, sinon raison de l'exclusion ; t_open : 1re bougie horaire du marche sur le lieu
 
 
@@ -364,6 +366,19 @@ def venue_open(venue, tick, t_ann, now):
     return min(ts) if ts else None
 
 
+def early_requests(now):
+    """live/EXIT_EARLY -> ids dont la sortie reelle anticipee est due (une ligne « id AAAA-MM-JJTHH:MMZ », ou « id » seul : tout de suite)."""
+    path, due = LIVE / "EXIT_EARLY", set()
+    for ln in (path.read_text(encoding="utf-8").splitlines() if path.exists() else []):
+        f = ln.split("#")[0].split()
+        try:
+            if f and (len(f) == 1 or calendar.timegm(time.strptime(f[1], "%Y-%m-%dT%H:%MZ")) <= now):
+                due.add(f[0])
+        except ValueError:                                          # ligne mal ecrite : ignoree, jamais un passage interrompu
+            print(f"EXIT_EARLY : ligne illisible ignoree : {ln!r}")
+    return due
+
+
 def gone_fill(broker, coin, since):
     """Position reelle disparue (stop sur le mark, ADL, liquidation, radiation, passage tue) -> (quantite, prix moyen, heure) de ses rachats lus sur
     l'exchange depuis `since`, ou None : jamais un stop a +50 % suppose (erratum v1.1, regle 3)."""
@@ -652,7 +667,7 @@ def real_exit(j, ctx, broker, positions, alerts):
             checkpoint()
             if done_qty(sold[c], lsize) < lsize - 1e-9:
                 raise RuntimeError(f"vente partielle de {c} ({done_qty(sold[c], lsize):g} sur {lsize:g}), suite au prochain passage")
-        px_out, out, t_in, t_out = float(j["r_px_out"]), {c: float(x[1]) for c, x in sold.items()}, int(j["t_in"]), int(j["t_out"])
+        px_out, out, t_in, t_out = float(j["r_px_out"]), {c: float(x[1]) for c, x in sold.items()}, int(j["t_in"]), int(j["r_t_out"] or j["t_out"])
         fee, ex = TAKER[j["exch"]], j["exch"]
         usd = size * (px_in - px_out) - fee * size * (px_in + px_out) + size * px_in * funding_sum(ex, coin, t_in, t_out)
         for c, lsize, lpx in json.loads(j["r_legs"] or "[]"):
@@ -783,6 +798,15 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
         value, have, used = brokers[ex].state()
         return value, sum(-z * price(pctx[ex], c, 0.0) for c, z in have.items() if z < 0), used, MIN_LEG[ex]
 
+    early = early_requests(now)
+    for j in journal:                                               # 1 bis. sorties reelles anticipees (live/EXIT_EARLY), AVANT les entrees ; le fictif continue
+        b = brokers.get(j["exch"])
+        if b and j["id"] in early and j["r_size"] != "" and j["r_net_usd"] == "" and j["status"] == "ouvert":
+            if not j["r_t_out"]:
+                j["r_t_out"] = now
+                j["r_note"] = (j["r_note"] + " ; " if j["r_note"] else "") + f"sortie reelle anticipee demandee (live/EXIT_EARLY) le {time.strftime('%d/%m %H:%M UTC', time.gmtime(now))}, la ligne fictive continue"
+                alerts.append(f"SORTIE REELLE ANTICIPEE {j['exch']}:{j['coin']} (la ligne fictive continue jusqu'a sa sortie)")
+            real_exit(j, pctx[j["exch"]], b, positions.get(j["exch"], {}), alerts)
     done, by_id = set(), {x["id"]: x for x in journal}
     for j in journal:                                               # 2. entrees dues, par SIGNAL : la ligne principale et sa jumelle ensemble
         if j["id"] in done or j["status"] != "signal" or now < int(j["entry_ts"]):
@@ -831,7 +855,7 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
         if t_in >= now:                                             # ouverte a CE passage : rien n'a pu se passer, et `positions` (lu avant l'entree) ne la connait pas
             continue
         pos = positions.get(j["exch"], {})
-        held = j["exch"] in positions and j["real"] == "reel"       # position reelle ouverte a un passage precedent : `pos` la connait forcement
+        held = j["exch"] in positions and j["real"] == "reel" and not j["r_t_out"]     # reelle ouverte a un passage precedent (hors sortie anticipee)
         try:
             if held and j["r_stop"] == "" and j["coin"] in pos:     # stop absent (pose en echec) : on le repose
                 try:
@@ -976,7 +1000,7 @@ def main():
 
 
 def _selftest():
-    global book_snapshot, candles, funding_sum, SAVE, binance_perp, venue_open
+    global book_snapshot, candles, funding_sum, SAVE, binance_perp, venue_open, early_requests
     assert schedule(1000000000) == (1000000000 + DELAY_S + 200 + 300, 1000000000 + DELAY_S + 500 + HOLD_S)         # 1e9 + 36 h n'est pas sur une bougie : arrondi au-dessus
     j0 = {c: "" for c in J_COLS} | {"id": "x", "ticker": "Z", "exch": "hl", "coin": "Z", "status": "signal", "entry_ts": 1000, "exit_ts": 1000 + HOLD_S, "t_ann": 0}
     assert j0["exit_ts"] - j0["entry_ts"] == HOLD_S
@@ -1125,6 +1149,16 @@ def _selftest():
     step(int(jk[0]["entry_ts"]), jk, [], [], ctx2, {}, Fake(live=True))
     assert jk[0]["status"] == "ineligible" and "deja cote" in jk[0]["note"]
     venue_open, candles = (lambda venue, tick, t_ann, now: t_ann + 3600), one
+    be, se = Fake(live=True), dict(sig) | {c: "" for c in R_COLS} | {"status": "signal", "t_in": "", "net_hedged": "", "id": "early"}   # sortie reelle anticipee
+    step(t + 60, [se], [], [], ctx2, {}, be)
+    early_requests, ae = (lambda now: {"early"}), []
+    step(t + 3660, [se], [], ae, ctx2, {}, be)
+    assert se["status"] == "ouvert" and se["r_net_usd"] != "" and se["r_t_out"] == t + 3660 and be.pos == {} and any("ANTICIPEE" in x for x in ae), ae
+    step(t + 7260, [se], [], [], ctx2, {}, be)                                                    # position absente : PAS une position disparue
+    assert se["status"] == "ouvert" and se["pop"] == "" and be.sent.count(("SUI", "buy", 75.0, True)) == 1
+    step(t + HOLD_S + 60, [se], [], [], ctx2, {}, be)
+    assert se["status"] == "clos" and se["net_hedged"] != "" and be.sent.count(("SUI", "buy", 75.0, True)) == 1     # le fictif sort a 5 j ; aucun 2e rachat
+    early_requests = lambda now: set()
     sv, saved = dict(sig) | {c: "" for c in R_COLS} | {"status": "signal", "t_in": "", "net_hedged": ""}, []   # point de reprise apres CHAQUE ordre accepte
     SAVE = lambda: saved.append((sv["r_size"], sv["r_stop"], len(json.loads(sv["r_legs"] or "[]"))))
     step(t + 60, [sv], [], [], ctx2, {}, Fake(live=True))
