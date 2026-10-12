@@ -30,3 +30,4 @@ bithumb-ZEST-1791772910,1791772910,bithumb,ZEST,aster,ZESTUSDT,ineligible,deja u
 upbit-RSR-1791780849,1791780849,upbit,RSR,hl,RSR,signal,,1791910800,1792342800,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,0.14982,,,
 bithumb-KGEN-1791795306,1791795306,bithumb,KGEN,aster,KGENUSDT,signal,,1791925500,1792357500,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,0.05247,,,
 upbit-GTC-1791799212,1791799212,upbit,GTC,aster,GTCUSDT,signal,,1791929400,1792361400,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,0.2977,,,
+upbit-GTC-1791799200,1791799200,upbit,GTC,aster,GTCUSDT,ineligible,deja un signal ou une position sur ce coin,1791929100,1792361100,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,,,,
