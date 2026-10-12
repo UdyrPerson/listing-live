@@ -1,4 +1,1 @@
-SORTIE FICTIVE (clos) aster:BRUSDT : short +1199 pb, couverture -388 pb, total +810 pb | test sequentiel (v1.1, pondere) : n 1, S +0.041, bornes [-1.33 ; +1.35] -> en cours
-SORTIE FICTIVE (clos) aster:PODUSDT : short -339 pb, couverture -387 pb, total -726 pb | test sequentiel (v1.1, pondere) : n 1, S +0.041, bornes [-1.33 ; +1.35] -> en cours
-SORTIE REEL BRUSDT : +2.84 $ (+744 pb du notionnel)
-SORTIE REEL INCOMPLETE PODUSDT : rachat partiel (75 sur 78) : stop maintenu, suite au prochain passage -> suite au prochain passage
+SORTIE REEL PODUSDT : -1.75 $ (-352 pb du notionnel)
