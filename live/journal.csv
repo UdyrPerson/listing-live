@@ -26,3 +26,4 @@ upbit-KAIA-1791533222,1791533222,upbit,KAIA,,,ineligible,pas de perp sur Hyperli
 upbit-KAIA-1791533206,1791533206,upbit,KAIA,,,ineligible,pas de perp sur Hyperliquid ni sur Aster,1791663300,1792095300,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,,,,
 bithumb-XDP-1791541897,1791541897,bithumb,XDP,aster,XDPUSDT,ouvert,,1791672000,1792104722,1791672722,0.02348,0.0235,8.51,0.02348,4.26,13.99,,,"[""BNB"", ""ETH"", ""SOL"", ""DOGE""]","[750.635, 2505.35, 110.325, 0.08568]",,,,,,,,,,,,,,,,,"cible 50 $ : part nulle ou sous l'ordre minimum sur ce compte (plafonds atteints), pas d'ordre",,spot_krw,0.11772,,hors test : pas de perp Binance (suivi fictif seulement),
 bithumb-ZEST-1791772978,1791772978,bithumb,ZEST,aster,ZESTUSDT,signal,,1791903000,1792335000,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,0.06573,,,
+bithumb-ZEST-1791772910,1791772910,bithumb,ZEST,aster,ZESTUSDT,ineligible,deja un signal ou une position sur ce coin,1791903000,1792335000,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,,,,
