@@ -1,2 +1,0 @@
-ENTREE FICTIVE short hl:RSR a 0.0020138524718067256 (spread 5.0 pb, glissement 1 k$ 3.21 pb, 5 k$ 11.66 pb)
-ENTREE REEL short 23567.0 RSR a 0.002013 (47 $) ; stop 573378450864 ; couverture 47 $ [('BNB', 0.016), ('ETH', 0.0047), ('SOL', 0.11), ('DOGE', 142.0)] ; part de la repartition 47 $ ; taille 47 $ (compte 178 $, w = min(1, 8% / vol 15.0%)), marge deja bloquee 20 $, short deja ouvert 45 $ (limite : taille cible)
