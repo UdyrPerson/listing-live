@@ -1,4 +1,0 @@
-SORTIE REELLE ANTICIPEE hl:PONS (la ligne fictive continue jusqu'a sa sortie)
-SORTIE REEL PONS : +18.45 $ (+1586 pb du notionnel)
-SORTIE REELLE ANTICIPEE aster:PONSUSDT (la ligne fictive continue jusqu'a sa sortie)
-SORTIE REEL PONSUSDT : +4.05 $ (+1538 pb du notionnel)
