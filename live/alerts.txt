@@ -1,0 +1,2 @@
+ENTREE FICTIVE short aster:GTCUSDT a 0.22407781762690135 (spread 14.3 pb, glissement 1 k$ 7.23 pb, 5 k$ 9.93 pb)
+ENTREE ASTER ECARTEE GTCUSDT : cible 21 $ : part nulle ou sous l'ordre minimum sur ce compte (plafonds atteints), pas d'ordre
