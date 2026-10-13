@@ -1,0 +1,2 @@
+ENTREE FICTIVE short aster:ZESTUSDT a 0.1812010601602323 (spread 12.7 pb, glissement 1 k$ 10.14 pb, 5 k$ 21.83 pb)
+ENTREE REEL short 440.0 ZESTUSDT a 0.18127 (80 $) ; stop 95295175 ; couverture 80 $ [('BNBUSDT', 0.03), ('ETHUSDT', 0.008), ('SOLUSDT', 0.17), ('DOGEUSDT', 223.0)] ; part de la repartition 80 $ ; taille 80 $ (compte 159 $, w = min(1, 8% / vol 6.6%)), marge deja bloquee 29 $, short deja ouvert 65 $ (limite : taille cible)
