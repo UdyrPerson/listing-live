@@ -1,2 +1,0 @@
-ENTREE FICTIVE short aster:KGENUSDT a 0.11109999999999999 (spread 35.9 pb, glissement 1 k$ 17.97 pb, 5 k$ 44.64 pb)
-ENTREE REEL short 266.0 KGENUSDT a 0.1111 (30 $) ; stop 698845405 ; couverture 30 $ [('BNBUSDT', 0.01), ('ETHUSDT', 0.003), ('SOLUSDT', 0.07), ('DOGEUSDT', 84.0)] ; part de la repartition 30 $ ; taille 30 $ (compte 156 $, w = min(1, 8% / vol 5.2%)), marge deja bloquee 55 $, short deja ouvert 126 $ (limite : taille cible)
