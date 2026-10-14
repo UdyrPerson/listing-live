@@ -1,2 +1,0 @@
-SORTIE FICTIVE (clos) hl:PONS : short +858 pb, couverture -57 pb, total +801 pb | test sequentiel (v1.1, pondere) : n 2, S +0.115, bornes [-1.32 ; +1.35] -> en cours
-SORTIE FICTIVE (clos) aster:PONSUSDT : short +881 pb, couverture -57 pb, total +824 pb | test sequentiel (v1.1, pondere) : n 2, S +0.115, bornes [-1.32 ; +1.35] -> en cours
