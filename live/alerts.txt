@@ -1,5 +1,0 @@
-SORTIE FICTIVE (clos) aster:AIAUSDT : short +845 pb, couverture -355 pb, total +490 pb | test sequentiel (v1.1, pondere) : n 3, S +0.156, bornes [-1.31 ; +1.36] -> en cours
-SORTIE FICTIVE (clos) hl:CASHCAT : short +72 pb, couverture -356 pb, total -283 pb | test sequentiel (v1.1, pondere) : n 3, S +0.156, bornes [-1.31 ; +1.36] -> en cours
-SORTIE FICTIVE (clos) aster:CASHCATUSDT : short +103 pb, couverture -356 pb, total -252 pb | test sequentiel (v1.1, pondere) : n 3, S +0.156, bornes [-1.31 ; +1.36] -> en cours
-SORTIE REEL AIAUSDT : +1.99 $ (+434 pb du notionnel)
-SORTIE REEL CASHCAT : -1.41 $ (-291 pb du notionnel)
