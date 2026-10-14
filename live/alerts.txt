@@ -1,0 +1,2 @@
+NOUVEL ESSAI D'ENTREE REELLE aster:GTCUSDT
+ENTREE REEL short 100.5 GTCUSDT a 0.21353 (21 $) ; stop 118661155 ; couverture 22 $ [('BNBUSDT', 0.01), ('ETHUSDT', 0.003), ('SOLUSDT', 0.07)] ; part de la repartition 21 $ ; taille 21 $ (compte 160 $, w = min(1, 8% / vol 29.8%)), marge deja bloquee 46 $, short deja ouvert 106 $ (limite : taille cible)
