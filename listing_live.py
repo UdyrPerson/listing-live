@@ -43,6 +43,7 @@ ASTER = "https://fapi.asterdex.com"
 VENUES = {("upbit", "spot_krw"), ("bithumb", "spot_krw"), ("coinbase", "spot"), ("binance", "spot"), ("robinhood", "spot"),
           ("binance", "perp")}                                  # listing de PERP Binance : suivi FICTIF seulement (spec 18), jamais d'ordre reel
 DELAY_S, HOLD_S, STOP = 36 * 3600, 120 * 3600, 0.5
+AUTO_LATE_S = 24 * 3600            # entree reelle tardive AUTOMATIQUE d'un signal refuse faute de place : jusqu'a 24 h apres l'entree prevue (+60 h, plateau)
 MAX_LATE_S = 60 * 3600             # entree reelle tardive demandee a la main : au plus 60 h apres l'annonce (plateau du delai d'entree, +36 h a +60 h)
 LATE_S = 6 * 3600                  # tolerance de retard a l'entree. La tache GitHub ne delivre que ~1 passage sur 4 (trous jusqu'a 4,6 h) ; le backtest montre
                                    # un plateau du delai d'entree (+36 h a +60 h : +259 a +328 pb couvert), donc entrer tard vaut bien mieux que manquer le trade.
@@ -367,6 +368,11 @@ def venue_open(venue, tick, t_ann, now):
         raise ValueError(f"pas de donnees publiques pour {venue}")
     ts = [x for x in ts if x >= start]
     return min(ts) if ts else None
+
+
+def capacity_refused(note):
+    """Note d'une ligne sans ordre reel -> True si le refus venait du manque de place (repartition, plafond d'exposition, marge, nombre de positions)."""
+    return any(k in note for k in ("plafonds atteints", "plafond d'exposition atteint", "positions : pas d'entree"))
 
 
 def early_requests(now, name="EXIT_EARLY"):
@@ -901,12 +907,14 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
         alerts.append(f"SORTIE FICTIVE ({status}) {j['exch']}:{j['coin']} : short {short * 1e4:+.0f} pb, couverture {hedge * 1e4:+.0f} pb, total {total * 1e4:+.0f} pb | "
                       f"test sequentiel (v1.1, pondere) : n {n}, S {S:+.3f}, bornes [{SPRT_DRIFT * n - SPRT_BOUND:+.2f} ; {SPRT_DRIFT * n + SPRT_BOUND:+.2f}] -> {verdict}")
     late = early_requests(now, "ENTER_LATE")
-    for j in journal:                                               # 3 bis. nouvel essai d'une entree reelle en echec, tant que la fenetre LATE_S est ouverte,
-        b = brokers.get(j["exch"])                                  # ou entree tardive demandee (live/ENTER_LATE) a moins de MAX_LATE_S de l'annonce.
-        if not (b and j["status"] == "ouvert" and j["r_size"] == "" and not fam(j) and not j["pop"] and int(j["t_in"]) < now   # APRES l'etape 3
-                and ((j["r_note"].startswith("entree en echec") and now <= int(j["entry_ts"]) + LATE_S)
-                     or (j["id"] in late and now <= int(j["t_ann"]) + MAX_LATE_S))):
-            continue
+    for j in journal:                                               # 3 bis. entree reelle apres coup, APRES les entrees prevues de ce passage (elles passent d'abord) :
+        b = brokers.get(j["exch"])                                  # nouvel essai d'une entree en echec (LATE_S) ; signal refuse faute de place, repris
+        held = any(x["r_size"] != "" for x in journal if (x["twin"] or x["id"]) == (j["twin"] or j["id"]))     # automatiquement si la place revient dans les
+        why = ("NOUVEL ESSAI D'ENTREE REELLE" if j["r_note"].startswith("entree en echec") and now <= int(j["entry_ts"]) + LATE_S          # AUTO_LATE_S apres
+               else "ENTREE REELLE TARDIVE AUTOMATIQUE (place revenue)" if capacity_refused(j["r_note"]) and not held and now <= int(j["entry_ts"]) + AUTO_LATE_S
+               else "ENTREE REELLE TARDIVE DEMANDEE (live/ENTER_LATE)" if j["id"] in late and now <= int(j["t_ann"]) + MAX_LATE_S else "")    # l'entree prevue
+        if not (why and b and j["status"] == "ouvert" and j["r_size"] == "" and not fam(j) and not j["pop"] and int(j["t_in"]) < now):    # (pas pour une jumelle
+            continue                                                # dont l'autre ligne tient deja le signal) ; ou demande manuelle. Sortie : celle du fictif
         try:
             s = book_snapshot(j["exch"], j["coin"])
             acc = account(j["exch"])
@@ -916,7 +924,7 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
             continue
         if j["exch"] in alloc:
             legs = json.loads(j["legs"])
-            alerts.append(f"NOUVEL ESSAI D'ENTREE REELLE {j['exch']}:{j['coin']}")
+            alerts.append(f"{why} {j['exch']}:{j['coin']}")
             real_enter(j, s, pctx[j["exch"]], b, journal, alerts, legs if j["exch"] == "hl" else [aster_syms[c] for c in legs if c in (aster_syms or {})],
                        target=alloc[j["exch"]])
     for j in journal:                                               # 4. sorties du pilote, y compris celles restees incompletes a un passage precedent
@@ -1165,9 +1173,18 @@ def _selftest():
     assert se["status"] == "clos" and se["net_hedged"] != "" and be.sent.count(("SUI", "buy", 75.0, True)) == 1     # le fictif sort a 5 j ; aucun 2e rachat
     early_requests = lambda now, name="EXIT_EARLY": set()
     bl, sl = Fake(live=True), dict(sig) | {c: "" for c in R_COLS} | {"status": "ouvert", "t_in": t - 3600, "net_hedged": "", "id": "late", "legs": json.dumps(list(HEDGE)),
+                                         "t_ann": t - 40 * 3600, "entry_ts": t - 25 * 3600,      # entree prevue il y a 25 h : hors de la reprise automatique
                                          "r_note": "cible 150 $ : part nulle ou sous l'ordre minimum sur ce compte (plafonds atteints), pas d'ordre"}
     step(t + 60, [sl], [], [], ctx2, {}, bl)
-    assert sl["r_size"] == "" and bl.sent == []                                                   # refusee faute de place : pas de nouvel essai seul
+    assert sl["r_size"] == "" and bl.sent == []                                                   # refusee faute de place il y a plus de 24 h : rien
+    ba = Fake(live=True)                                                                          # refusee faute de place il y a 1 h, la place est revenue
+    sa2 = dict(sl) | {"id": "auto", "t_ann": t - DELAY_S - 3600, "entry_ts": t - 3600}
+    tw2 = dict(sa2) | {"id": "auto-aster", "twin": "auto", "exch": "aster"}                       # jumelle d'un signal deja tenu ailleurs : jamais
+    jt = [sa2 | {"r_size": "", "exch": "hl"}, dict(sl) | {"id": "tenu", "r_size": 75.0, "r_net_usd": 1.0, "real": "reel", "status": "clos", "net_hedged": 0.01, "t_out": t - 100},
+          dict(tw2) | {"id": "tenu-aster", "twin": "tenu"}]
+    aa3 = []
+    step(t + 60, jt, [], aa3, ctx2, {}, {"hl": ba, "aster": Fake(live=True)})
+    assert jt[0]["r_size"] == 75.0 and any("TARDIVE AUTOMATIQUE" in x for x in aa3) and jt[2]["r_size"] == "", aa3
     early_requests = lambda now, name="EXIT_EARLY": {"late"} if name == "ENTER_LATE" else set()
     step(t + 60, [sl], [], [], ctx2, {}, bl)
     assert sl["r_size"] == 75.0 and bl.pos["SUI"] == -75.0                                        # entree tardive demandee : ordre reel
