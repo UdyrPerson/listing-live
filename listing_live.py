@@ -16,6 +16,8 @@ deux (ligne jumelle) : cible F x w x somme des capitaux, repartie pour egaliser 
   equity.csv         valeur du compte Hyperliquid a chaque passage (equity_aster.csv : compte Aster)
   EXIT_EARLY         sorties REELLES anticipees demandees a la main : une ligne « id AAAA-MM-JJTHH:MMZ » (pas avant cette heure) ; short et
                      couverture rachetes et vendus au passage suivant, la ligne FICTIVE continue jusqu'a sa sortie (le test sequentiel n'est pas touche)
+  ENTER_LATE         entrees REELLES tardives demandees a la main (meme format) : une ligne fictive deja entree mais sans ordre reel (refusee faute de
+                     place) recoit son ordre au passage suivant, si l'on est encore a moins de MAX_LATE_S de l'annonce (plateau du delai d'entree)
   STOP               s'il existe, plus aucune entree reelle (les sorties continuent) : arret d'urgence, a creer a la main dans le depot, ou cree par un
                      arret dur (hard_stops) ; on le supprime a la main pour reprendre
 Regle : research/listing-strategy-v1.md (v1.1). Short a +36 h, 5 jours, stop +50 %, couverture = panier equipondere fixe HEDGE (hors coins shortes
@@ -41,6 +43,7 @@ ASTER = "https://fapi.asterdex.com"
 VENUES = {("upbit", "spot_krw"), ("bithumb", "spot_krw"), ("coinbase", "spot"), ("binance", "spot"), ("robinhood", "spot"),
           ("binance", "perp")}                                  # listing de PERP Binance : suivi FICTIF seulement (spec 18), jamais d'ordre reel
 DELAY_S, HOLD_S, STOP = 36 * 3600, 120 * 3600, 0.5
+MAX_LATE_S = 60 * 3600             # entree reelle tardive demandee a la main : au plus 60 h apres l'annonce (plateau du delai d'entree, +36 h a +60 h)
 LATE_S = 6 * 3600                  # tolerance de retard a l'entree. La tache GitHub ne delivre que ~1 passage sur 4 (trous jusqu'a 4,6 h) ; le backtest montre
                                    # un plateau du delai d'entree (+36 h a +60 h : +259 a +328 pb couvert), donc entrer tard vaut bien mieux que manquer le trade.
 LOOKBACK_S = 12 * 3600             # profondeur de relecture des fils a chaque passage (la tache GitHub peut sauter des heures)
@@ -366,16 +369,16 @@ def venue_open(venue, tick, t_ann, now):
     return min(ts) if ts else None
 
 
-def early_requests(now):
-    """live/EXIT_EARLY -> ids dont la sortie reelle anticipee est due (une ligne « id AAAA-MM-JJTHH:MMZ », ou « id » seul : tout de suite)."""
-    path, due = LIVE / "EXIT_EARLY", set()
+def early_requests(now, name="EXIT_EARLY"):
+    """live/EXIT_EARLY (ou ENTER_LATE) -> ids dont la demande est due (une ligne « id AAAA-MM-JJTHH:MMZ », ou « id » seul : tout de suite)."""
+    path, due = LIVE / name, set()
     for ln in (path.read_text(encoding="utf-8").splitlines() if path.exists() else []):
         f = ln.split("#")[0].split()
         try:
             if f and (len(f) == 1 or calendar.timegm(time.strptime(f[1], "%Y-%m-%dT%H:%MZ")) <= now):
                 due.add(f[0])
         except ValueError:                                          # ligne mal ecrite : ignoree, jamais un passage interrompu
-            print(f"EXIT_EARLY : ligne illisible ignoree : {ln!r}")
+            print(f"{name} : ligne illisible ignoree : {ln!r}")
     return due
 
 
@@ -897,10 +900,12 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
         n, S, verdict = sprt_v11(journal)
         alerts.append(f"SORTIE FICTIVE ({status}) {j['exch']}:{j['coin']} : short {short * 1e4:+.0f} pb, couverture {hedge * 1e4:+.0f} pb, total {total * 1e4:+.0f} pb | "
                       f"test sequentiel (v1.1, pondere) : n {n}, S {S:+.3f}, bornes [{SPRT_DRIFT * n - SPRT_BOUND:+.2f} ; {SPRT_DRIFT * n + SPRT_BOUND:+.2f}] -> {verdict}")
-    for j in journal:                                               # 3 bis. nouvel essai d'une entree reelle en echec, tant que la fenetre LATE_S est ouverte
-        b = brokers.get(j["exch"])                                  # APRES l'etape 3 : une position ouverte ici n'est jamais examinee dans ce passage
-        if not (b and j["status"] == "ouvert" and j["r_size"] == "" and j["r_note"].startswith("entree en echec") and not fam(j) and not j["pop"]
-                and int(j["t_in"]) < now <= int(j["entry_ts"]) + LATE_S):
+    late = early_requests(now, "ENTER_LATE")
+    for j in journal:                                               # 3 bis. nouvel essai d'une entree reelle en echec, tant que la fenetre LATE_S est ouverte,
+        b = brokers.get(j["exch"])                                  # ou entree tardive demandee (live/ENTER_LATE) a moins de MAX_LATE_S de l'annonce.
+        if not (b and j["status"] == "ouvert" and j["r_size"] == "" and not fam(j) and not j["pop"] and int(j["t_in"]) < now   # APRES l'etape 3
+                and ((j["r_note"].startswith("entree en echec") and now <= int(j["entry_ts"]) + LATE_S)
+                     or (j["id"] in late and now <= int(j["t_ann"]) + MAX_LATE_S))):
             continue
         try:
             s = book_snapshot(j["exch"], j["coin"])
@@ -1151,14 +1156,25 @@ def _selftest():
     venue_open, candles = (lambda venue, tick, t_ann, now: t_ann + 3600), one
     be, se = Fake(live=True), dict(sig) | {c: "" for c in R_COLS} | {"status": "signal", "t_in": "", "net_hedged": "", "id": "early"}   # sortie reelle anticipee
     step(t + 60, [se], [], [], ctx2, {}, be)
-    early_requests, ae = (lambda now: {"early"}), []
+    early_requests, ae = (lambda now, name="EXIT_EARLY": {"early"} if name == "EXIT_EARLY" else set()), []
     step(t + 3660, [se], [], ae, ctx2, {}, be)
     assert se["status"] == "ouvert" and se["r_net_usd"] != "" and se["r_t_out"] == t + 3660 and be.pos == {} and any("ANTICIPEE" in x for x in ae), ae
     step(t + 7260, [se], [], [], ctx2, {}, be)                                                    # position absente : PAS une position disparue
     assert se["status"] == "ouvert" and se["pop"] == "" and be.sent.count(("SUI", "buy", 75.0, True)) == 1
     step(t + HOLD_S + 60, [se], [], [], ctx2, {}, be)
     assert se["status"] == "clos" and se["net_hedged"] != "" and be.sent.count(("SUI", "buy", 75.0, True)) == 1     # le fictif sort a 5 j ; aucun 2e rachat
-    early_requests = lambda now: set()
+    early_requests = lambda now, name="EXIT_EARLY": set()
+    bl, sl = Fake(live=True), dict(sig) | {c: "" for c in R_COLS} | {"status": "ouvert", "t_in": t - 3600, "net_hedged": "", "id": "late", "legs": json.dumps(list(HEDGE)),
+                                         "r_note": "cible 150 $ : part nulle ou sous l'ordre minimum sur ce compte (plafonds atteints), pas d'ordre"}
+    step(t + 60, [sl], [], [], ctx2, {}, bl)
+    assert sl["r_size"] == "" and bl.sent == []                                                   # refusee faute de place : pas de nouvel essai seul
+    early_requests = lambda now, name="EXIT_EARLY": {"late"} if name == "ENTER_LATE" else set()
+    step(t + 60, [sl], [], [], ctx2, {}, bl)
+    assert sl["r_size"] == 75.0 and bl.pos["SUI"] == -75.0                                        # entree tardive demandee : ordre reel
+    sm = dict(sl) | {c: "" for c in R_COLS} | {"id": "late", "t_ann": t - MAX_LATE_S - 60, "r_note": "cible : part nulle"}
+    step(t + 60, [sm], [], [], ctx2, {}, Fake(live=True))
+    assert sm["r_size"] == ""                                                                     # au-dela de 60 h apres l'annonce : jamais
+    early_requests = lambda now, name="EXIT_EARLY": set()
     sv, saved = dict(sig) | {c: "" for c in R_COLS} | {"status": "signal", "t_in": "", "net_hedged": ""}, []   # point de reprise apres CHAQUE ordre accepte
     SAVE = lambda: saved.append((sv["r_size"], sv["r_stop"], len(json.loads(sv["r_legs"] or "[]"))))
     step(t + 60, [sv], [], [], ctx2, {}, Fake(live=True))
