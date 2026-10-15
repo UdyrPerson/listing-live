@@ -23,3 +23,4 @@ ts,venue,market,ticker,n_tickers,head,source
 1791795306,bithumb,spot_krw,KGEN,1,케이젠(KGEN) 원화 마켓 추가,bithumb_api
 1791799200,upbit,spot_krw,GTC,1,"깃코인(GTC) KRW, USDT 마켓 디지털 자산 추가",upbit_api
 1792032547,bithumb,spot_krw,ACU,1,아큐라스트(ACU) 원화 마켓 추가,bithumb_api
+1792039200,upbit,spot_krw,PUFFER,1,퍼퍼(PUFFER) KRW 마켓 디지털 자산 추가,upbit_api
