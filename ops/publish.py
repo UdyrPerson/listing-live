@@ -36,6 +36,43 @@ def series(eq):
     return out
 
 
+def trade_rows(journal, px):
+    """Une entree par signal du journal, volet fictif (la regle, que juge le test sequentiel) et volet reel (ordres, latent ou realise), pour le journal
+    des trades de la page. Latent reel = short + couverture au prix du moment, hors frais et funding."""
+    out = []
+    for j in journal:
+        if j["status"] not in ("signal", "ouvert", "clos", "stoppe"):
+            continue
+        p, perp = px.get(j["exch"], {}), j["market"] == "perp"
+        twin, t0 = bool(j["twin"]) or j["id"].endswith("-aster"), int(j["t_in"] or j["entry_ts"] or 0)
+        x = {"id": j["id"], "coin": j["ticker"], "exch": j["exch"], "t_ann": int(float(j["t_ann"])), "twin": twin, "state": j["status"],
+             "listing": LABEL.get((j["venue"], j["market"] or {"upbit": "spot_krw", "bithumb": "spot_krw"}.get(j["venue"], "spot")), j["venue"]),
+             "test": not (twin or perp or j.get("pop") or j["id"] in ll.ERRATUM) and t0 >= ll.V11_FROM, "v": "v1.1" if t0 >= ll.V11_FROM else "v1",
+             "out": j.get("pop", "") or ("listing de perp : fictif seulement" if perp else ""), "entry_ts": int(j["entry_ts"] or 0), "exit_ts": int(j["exit_ts"] or 0)}
+        if j["t_in"]:
+            x |= {"t_in": int(j["t_in"]), "px_in": float(j["px_in"] or j["r_px_in"] or 0)}
+            if j["status"] == "ouvert" and j["coin"] in p and x["px_in"]:
+                x["ret_bp"] = round((1 - p[j["coin"]] / x["px_in"]) * 1e4)
+        if j["net_hedged"] != "":
+            x |= {"t_out": int(j["t_out"]), "px_out": float(j["px_out"]), "short_bp": round(float(j["short_net"]) * 1e4),
+                  "hedge_bp": round(float(j["hedge_net"]) * 1e4), "net_bp": round(float(j["net_hedged"]) * 1e4)}
+        if j["r_size"]:
+            size, p0, legs = float(j["r_size"]), float(j["r_px_in"]), json.loads(j["r_legs"] or "[]")
+            r = {"usd": round(size * p0, 1), "open": j["r_net_usd"] == ""}
+            if not r["open"]:
+                r |= {"pnl": round(float(j["r_net_usd"]), 2), "pnl_bp": round(float(j["r_net_usd"]) / (size * p0) * 1e4), "early": bool(j.get("r_t_out")),
+                      "t_out": int(j.get("r_t_out") or j["t_out"] or 0)}
+            elif j["coin"] in p and all(c in p for c, _, _ in legs):
+                r |= {"latent": round(size * (p0 - p[j["coin"]]) + sum(z * (p[c] - q) for c, z, q in legs), 2),
+                      "hedge": round(sum(z * p[c] for c, z, _ in legs) / (size * p[j["coin"]]), 3)}
+            x["real"] = r
+        else:
+            x["real"] = None
+            x["why"] = ("hors test" if j.get("pop") else "listing de perp" if perp else "pas de place" if ll.capacity_refused(j["r_note"]) else "")
+        out.append(x)
+    return out
+
+
 def build(journal, eq, px, now, stop=False):
     """Instantane pour la page. px = {exch: {coin: prix}} ; une position dont un prix manque garde ses champs de marche a None."""
     def tag(j):
@@ -70,7 +107,8 @@ def build(journal, eq, px, now, stop=False):
     accounts = {ex: {"ts": rows[-1][0], "value": rows[-1][1]} for ex, rows in eq.items() if rows}
     return {"ts": now, "accounts": accounts, "pnl": series(eq), "open": sorted(open_, key=lambda x: x["t_in"]),
             "signals": sorted(signals, key=lambda x: x["entry_ts"]), "closed": sorted(closed, key=lambda x: -x["t_out"]),
-            "sprt": {"n": n, "s": round(s, 4), "verdict": verdict, "drift": ll.SPRT_DRIFT, "bound": ll.SPRT_BOUND}, "stop": stop}
+            "sprt": {"n": n, "s": round(s, 4), "verdict": verdict, "drift": ll.SPRT_DRIFT, "bound": ll.SPRT_BOUND}, "stop": stop,
+            "trades": trade_rows(journal, px)}
 
 
 def main():
