@@ -1,1 +1,0 @@
-SORTIE FICTIVE (clos) aster:XDPUSDT : short +1655 pb, couverture -360 pb, total +1294 pb | test sequentiel (v1.1, pondere) : n 3, S +0.156, bornes [-1.31 ; +1.36] -> en cours
