@@ -1,2 +1,1 @@
-ANNONCE bithumb ACU -> signal  | entree prevue 2026-10-16 14:55 UTC sur aster:ACUUSDT
-ANNONCE ASTER : [Delisting Notice] B-MONEYUSDT Perpetual - 2026-10-15 09:00 UTC
+ANNONCE bithumb ACU -> ineligible deja un signal ou une position sur ce coin
