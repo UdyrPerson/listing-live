@@ -1,2 +1,0 @@
-ENTREE FICTIVE short aster:ACUUSDT a 0.10415350997328611 (spread 23.0 pb, glissement 1 k$ 12.13 pb, 5 k$  pb)
-ENTREE REEL short 379.0 ACUUSDT a 0.10416 (39 $) ; stop 384099551 ; couverture 39 $ [('ETHUSDT', 0.005), ('SOLUSDT', 0.13), ('DOGEUSDT', 169.0)] ; part de la repartition 39 $ ; taille 39 $ (compte 163 $, w = min(1, 8% / vol 7.4%)), marge deja bloquee 54 $, short deja ouvert 124 $ (limite : taille cible)
