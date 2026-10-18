@@ -1,0 +1,2 @@
+SORTIE FICTIVE (clos) aster:ZESTUSDT : short +92 pb, couverture -575 pb, total -482 pb | test sequentiel (v1.1, pondere) : n 4, S +0.108, bornes [-1.30 ; +1.37] -> en cours
+SORTIE REEL ZESTUSDT : -3.71 $ (-465 pb du notionnel)
