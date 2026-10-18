@@ -1,0 +1,2 @@
+SORTIE FICTIVE (clos) hl:RSR : short +366 pb, couverture -549 pb, total -184 pb | test sequentiel (v1.1, pondere) : n 5, S +0.098, bornes [-1.30 ; +1.38] -> en cours
+SORTIE REEL RSR : -0.94 $ (-199 pb du notionnel)
