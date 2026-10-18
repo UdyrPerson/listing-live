@@ -1,0 +1,2 @@
+SORTIE FICTIVE (clos) aster:KGENUSDT : short +2340 pb, couverture -630 pb, total +1710 pb | test sequentiel (v1.1, pondere) : n 6, S +0.269, bornes [-1.29 ; +1.39] -> en cours
+SORTIE REEL KGENUSDT : +5.08 $ (+1718 pb du notionnel)
