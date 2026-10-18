@@ -1,2 +1,0 @@
-SORTIE FICTIVE (clos) aster:GTCUSDT : short -2208 pb, couverture -466 pb, total -2674 pb | test sequentiel (v1.1, pondere) : n 7, S +0.197, bornes [-1.28 ; +1.39] -> en cours
-SORTIE REEL GTCUSDT : -6.33 $ (-2951 pb du notionnel)
