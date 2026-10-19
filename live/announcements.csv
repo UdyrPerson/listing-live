@@ -25,3 +25,4 @@ ts,venue,market,ticker,n_tickers,head,source
 1792032547,bithumb,spot_krw,ACU,1,아큐라스트(ACU) 원화 마켓 추가,bithumb_api
 1792039200,upbit,spot_krw,PUFFER,1,퍼퍼(PUFFER) KRW 마켓 디지털 자산 추가,upbit_api
 1792395600,upbit,spot_krw,CT,1,"콘크리트(CT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",upbit_api
+1792396707,bithumb,spot_krw,CT,1,콘크리트(CT) 원화 마켓 추가,bithumb_api
