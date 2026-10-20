@@ -1,0 +1,2 @@
+ENTREE FICTIVE short aster:CTUSDT a 0.3096217455841988 (spread 14.5 pb, glissement 1 k$ 13.97 pb, 5 k$ 55.2 pb)
+ENTREE REEL short 252.0 CTUSDT a 0.30954 (78 $) ; stop 39449313 ; couverture 78 $ [('BNBUSDT', 0.03), ('ETHUSDT', 0.008), ('SOLUSDT', 0.17), ('DOGEUSDT', 224.0)] ; part de la repartition 78 $ ; taille 78 $ (compte 156 $, w = min(1, 8% / vol 6.0%)), marge deja bloquee 17 $, short deja ouvert 38 $ (limite : taille cible)
