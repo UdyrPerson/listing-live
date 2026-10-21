@@ -29,4 +29,4 @@ ts,venue,market,ticker,n_tickers,head,source
 1792486800,upbit,spot_krw,MPLX,1,메타플렉스(MPLX) KRW 마켓 디지털 자산 추가,upbit_api
 1792547677,bithumb,spot_krw,PYBOBO,1,카피보보(PYBOBO) 원화 마켓 추가,bithumb_api
 1792580400,upbit,spot_krw,AXIS,1,"액시스로보틱스(AXIS) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",upbit_api
-1792583222,bithumb,spot_krw,AT,1,【Bithumb 将上线 AT 韩元交易对】,ForesightNews
+1792583215,bithumb,spot_krw,AT,1,아프로(AT) 원화 마켓 추가,bithumb_api

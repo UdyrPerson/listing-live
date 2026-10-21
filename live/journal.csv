@@ -40,3 +40,4 @@ upbit-MPLX-1792486800,1792486800,upbit,MPLX,,,ineligible,pas de perp sur Hyperli
 bithumb-PYBOBO-1792547677,1792547677,bithumb,PYBOBO,,,ineligible,pas de perp sur Hyperliquid ni sur Aster,1792677600,1793109600,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,,,,,
 upbit-AXIS-1792580400,1792580400,upbit,AXIS,,,ineligible,pas de perp sur Hyperliquid ni sur Aster,1792710300,1793142300,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,,,,,
 bithumb-AT-1792583222,1792583222,bithumb,AT,aster,ATUSDT,signal,,1792713300,1793145300,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,0.02157,,,,
+bithumb-AT-1792583215,1792583215,bithumb,AT,aster,ATUSDT,ineligible,deja un signal ou une position sur ce coin,1792713300,1793145300,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,,,,,
