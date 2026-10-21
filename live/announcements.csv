@@ -27,3 +27,4 @@ ts,venue,market,ticker,n_tickers,head,source
 1792395600,upbit,spot_krw,CT,1,"콘크리트(CT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",upbit_api
 1792396707,bithumb,spot_krw,CT,1,콘크리트(CT) 원화 마켓 추가,bithumb_api
 1792486800,upbit,spot_krw,MPLX,1,메타플렉스(MPLX) KRW 마켓 디지털 자산 추가,upbit_api
+1792547677,bithumb,spot_krw,PYBOBO,1,카피보보(PYBOBO) 원화 마켓 추가,bithumb_api
