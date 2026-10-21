@@ -1,0 +1,2 @@
+SORTIE FICTIVE (clos) aster:ACUUSDT : short +7 pb, couverture +299 pb, total +306 pb | test sequentiel (v1.1, pondere) : n 8, S +0.228, bornes [-1.27 ; +1.40] -> en cours
+SORTIE REEL ACUUSDT : +1.22 $ (+309 pb du notionnel)
