@@ -1,0 +1,2 @@
+ENTREE FICTIVE short aster:ATUSDT a 0.1338 (spread 29.9 pb, glissement 1 k$ 14.93 pb, 5 k$ 37.02 pb)
+ENTREE REEL short 644.0 ATUSDT a 0.1338 (86 $) ; stop 476652826 ; couverture 86 $ [('BNBUSDT', 0.03), ('ETHUSDT', 0.009), ('SOLUSDT', 0.21), ('DOGEUSDT', 267.0)] ; part de la repartition 86 $ ; taille 86 $ (compte 172 $, w = min(1, 8% / vol 2.2%)), marge deja bloquee 27 $, short deja ouvert 57 $ (limite : taille cible)
