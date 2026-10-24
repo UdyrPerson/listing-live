@@ -31,3 +31,4 @@ ts,venue,market,ticker,n_tickers,head,source
 1792580400,upbit,spot_krw,AXIS,1,"액시스로보틱스(AXIS) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",upbit_api
 1792583215,bithumb,spot_krw,AT,1,아프로(AT) 원화 마켓 추가,bithumb_api
 1792801926,bithumb,spot_krw,AXIS,1,액시스로보틱스(AXIS) 원화 마켓 추가,bithumb_api
+1792809300,upbit,spot_krw,BMT,1,버블맵스(BMT) KRW 마켓 디지털 자산 추가,upbit_api
