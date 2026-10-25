@@ -1,0 +1,2 @@
+SORTIE FICTIVE (clos) aster:CTUSDT : short +4160 pb, couverture -336 pb, total +3823 pb | test sequentiel (v1.1, pondere) : n 9, S +0.610, bornes [-1.26 ; +1.41] -> en cours
+SORTIE REEL CTUSDT : +29.75 $ (+3814 pb du notionnel)
