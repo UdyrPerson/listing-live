@@ -1,2 +1,0 @@
-ENTREE FICTIVE short aster:BMTUSDT a 0.029470378694366223 (spread 23.7 pb, glissement 1 k$ 15.12 pb, 5 k$ 24.75 pb)
-ENTREE REEL short 1462.0 BMTUSDT a 0.0294788 (43 $) ; stop 153070326 ; couverture 43 $ [('ETHUSDT', 0.006), ('SOLUSDT', 0.14), ('DOGEUSDT', 193.0)] ; part de la repartition 43 $ ; taille 43 $ (compte 185 $, w = min(1, 8% / vol 17.2%)), marge deja bloquee 59 $, short deja ouvert 127 $ (limite : taille cible)
