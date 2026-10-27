@@ -46,3 +46,5 @@ upbit-BMT-1792809300,1792809300,upbit,BMT,aster,BMTUSDT,ouvert,,1792939200,17933
 coinbase-RITUAL-1793023622,1793023622,coinbase,RITUAL,,,ineligible,pas de perp sur Hyperliquid ni sur Aster,1793153700,1793585700,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot,,,,,
 upbit-NIL-1793086200,1793086200,upbit,NIL,hl,NIL,signal,,1793216100,1793648100,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,0.08841,,,,
 upbit-NIL-1793086200-aster,1793086200,upbit,NIL,aster,NILUSDT,signal,,1793216100,1793648100,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,0.05599,upbit-NIL-1793086200,,,
+coinbase-STABLE-1793116322,1793116322,coinbase,STABLE,hl,STABLE,signal,,1793246400,1793678400,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot,0.04107,,,,
+coinbase-STABLE-1793116322-aster,1793116322,coinbase,STABLE,aster,STABLEUSDT,signal,,1793246400,1793678400,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot,0.01263,coinbase-STABLE-1793116322,,,
