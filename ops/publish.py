@@ -2,7 +2,7 @@
 # -> fonction push_snapshot d'une base Supabase. Lance par ops/run.sh apres chaque passage si /opt/listing-live/supabase existe
 # (SUPABASE_URL, SUPABASE_KEY = cle publiable, SUPABASE_TOKEN = jeton dont la base ne garde que l'empreinte sha256).
 # N'envoie que ce que live/ publie deja dans ce depot public : ni cle, ni adresse de compte.
-import csv, json, os, pathlib, sys, time
+import csv, json, os, pathlib, re, sys, time
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import requests
 import listing_live as ll
@@ -36,7 +36,40 @@ def series(eq):
     return out
 
 
-def trade_rows(journal, px):
+def sizing(journal, eq, px):
+    """Taille du pilote pour la page -> ({id: champs}, {exch: usage du compte}).
+    Position reelle ouverte : w, part de la repartition et plafond qui a limite l'entree (lus dans r_note, ecrit par real_enter).
+    Signal en attente : taille visee F x w x capitaux des comptes ou il se trade, parts prevues par allocate(), signaux pris dans l'ordre
+    d'entree. Etat des comptes : short reel au prix du moment, moins les positions sorties avant l'entree du signal, plus les parts deja
+    prevues ; marge estimee aux leviers du pilote. Estimation : les montants reels se fixent a l'entree, sur l'etat lu sur l'exchange."""
+    E = {ex: rows[-1][1] for ex, rows in eq.items() if rows}
+    mk, out, held = 1 / ll.LEV_SHORT + 1 / ll.LEV_HEDGE, {}, []          # held : (exchange, short en $, sortie prevue)
+    for j in journal:
+        if j["r_size"] and j["r_net_usd"] == "" and j["exch"] in E:
+            held.append((j["exch"], float(j["r_size"]) * (px.get(j["exch"], {}).get(j["coin"]) or float(j["r_px_in"])), int(j["exit_ts"] or 0)))
+            part, lim = re.search(r"part de la repartition (\d+) \$", j["r_note"]), re.search(r"limite : ([^)]+)\)", j["r_note"])
+            out[j["id"]] = {"w": round(ll.weight(j), 3), "part": float(part.group(1)) if part else None, "limit": lim.group(1) if lim else None}
+    usage = {ex: {"value": round(v, 2), "short": round(sum(z for e, z, _ in held if e == ex), 2), "n": sum(e == ex for e, _, _ in held)} for ex, v in E.items()}
+    for ex, u in usage.items():
+        u["pct"] = round(u["short"] / u["value"], 3)
+    for j in sorted((j for j in journal if j["status"] == "signal" and not j["twin"]), key=lambda j: int(j["entry_ts"])):
+        t = int(j["entry_ts"])
+        group = [x for x in [j] + [x for x in journal if x["twin"] == j["id"] and x["status"] == "signal"]
+                 if x["exch"] in E and x["market"] != "perp" and not x["pop"]]
+        live = [(e, z) for e, z, out_ts in held if out_ts > t]
+        acc = {x["exch"]: (E[x["exch"]], sum(z for e, z in live if e == x["exch"]), sum(z for e, z in live if e == x["exch"]) * mk, ll.MIN_LEG[x["exch"]])
+               for x in group if sum(e == x["exch"] for e, _ in live) < ll.MAX_REAL}
+        w = ll.weight(j)
+        target = ll.F * w * sum(E[x["exch"]] for x in group)
+        alloc = ll.allocate(target, acc) if acc else {}
+        for x in group:
+            out[x["id"]] = {"w": round(w, 3), "w_known": j["vol3d"] not in ("", "0", "0.0"), "target": round(target, 1), "plan": round(alloc.get(x["exch"], 0.0), 1)}
+            if alloc.get(x["exch"]):
+                held.append((x["exch"], alloc[x["exch"]], t + ll.HOLD_S))
+    return out, usage
+
+
+def trade_rows(journal, px, sizes=None):
     """Une entree par signal du journal, volet fictif (la regle, que juge le test sequentiel) et volet reel (ordres, latent ou realise), pour le journal
     des trades de la page. Latent reel = short + couverture au prix du moment, hors frais et funding."""
     out = []
@@ -69,6 +102,8 @@ def trade_rows(journal, px):
         else:
             x["real"] = None
             x["why"] = ("hors test" if j.get("pop") else "listing de perp" if perp else "pas de place" if ll.capacity_refused(j["r_note"]) else "")
+        if (sizes or {}).get(j["id"]):
+            x["size"] = sizes[j["id"]]
         out.append(x)
     return out
 
@@ -104,11 +139,12 @@ def build(journal, eq, px, now, stop=False):
                                     "hedge_bp": round(float(j["hedge_net"]) * 1e4), "net_bp": round(float(j["net_hedged"]) * 1e4),
                                     "usd": round(float(j["r_net_usd"]), 2) if j["r_net_usd"] else None})
     n, s, verdict = ll.sprt_v11(journal)
+    size, usage = sizing(journal, eq, px)
     accounts = {ex: {"ts": rows[-1][0], "value": rows[-1][1]} for ex, rows in eq.items() if rows}
     return {"ts": now, "accounts": accounts, "pnl": series(eq), "open": sorted(open_, key=lambda x: x["t_in"]),
             "signals": sorted(signals, key=lambda x: x["entry_ts"]), "closed": sorted(closed, key=lambda x: -x["t_out"]),
             "sprt": {"n": n, "s": round(s, 4), "verdict": verdict, "drift": ll.SPRT_DRIFT, "bound": ll.SPRT_BOUND}, "stop": stop,
-            "trades": trade_rows(journal, px)}
+            "trades": trade_rows(journal, px, size), "usage": usage}
 
 
 def main():
@@ -151,6 +187,15 @@ def _selftest():
     assert s["closed"][0]["net_bp"] == 800 and s["closed"][0]["usd"] == 1.23 and s["signals"] == []
     assert s["pnl"] == [[3700, 2.0, 0.0, 2.0], [7200, 2.0, 1.0, 3.0], [7300, -1.0, 1.0, 0.0]], s["pnl"]
     assert s["accounts"]["hl"]["value"] == 149.0 and s["sprt"]["verdict"] == "en cours"
+    assert s["usage"]["hl"] == {"value": 149.0, "short": 16.0, "n": 1, "pct": 0.107} and s["usage"]["aster"]["short"] == 0
+    sig = [j | {"id": "e", "ticker": "V", "coin": "V", "exch": "hl", "venue": "upbit", "market": "spot_krw", "t_ann": "100", "status": "signal",
+                "entry_ts": "1500", "exit_ts": "9000", "vol3d": "0.16"},
+           j | {"id": "e-aster", "ticker": "V", "coin": "VUSDT", "exch": "aster", "venue": "upbit", "market": "spot_krw", "t_ann": "100",
+                "status": "signal", "entry_ts": "1500", "exit_ts": "9000", "twin": "e", "vol3d": "0.05"}]
+    z, _ = sizing(rows + sig, {"hl": [(1, 149.0)], "aster": [(1, 153.53)]}, {"hl": {"X": 1.6}})
+    assert z["e"]["w"] == 0.5 and z["e-aster"]["w"] == 0.5 and z["e"]["target"] == round(0.5 * 0.5 * (149 + 153.53), 1)   # w de la ligne principale
+    assert abs(z["e"]["plan"] + z["e-aster"]["plan"] - z["e"]["target"]) < 0.2 and z["e-aster"]["plan"] > z["e"]["plan"]     # Aster, moins charge, recoit plus
+    assert z["a"]["w"] == 1.0 and z["a"]["part"] is None
     print("self-check ok")
 
 
