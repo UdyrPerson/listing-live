@@ -1,0 +1,4 @@
+ENTREE FICTIVE short hl:NIL a 0.08075198159572686 (spread 3.2 pb, glissement 1 k$ 8.54 pb, 5 k$ 12.86 pb)
+ENTREE FICTIVE short aster:NILUSDT (jumelle) a 0.08074123471004889 (spread 26.0 pb, glissement 1 k$ 20.24 pb, 5 k$ 30.13 pb)
+ENTREE REEL short 1206.0 NIL a 0.080744 (97 $) ; stop 588576805126 ; couverture 97 $ [('BNB', 0.032), ('ETH', 0.0104), ('SOL', 0.24), ('DOGE', 304.0)] ; part de la repartition 97 $ ; taille 97 $ (compte 172 $, w = min(1, 8% / vol 8.8%)), marge deja bloquee 0 $, short deja ouvert 0 $ (limite : taille cible)
+ENTREE REEL short 798.2 NILUSDT a 0.0807424 (64 $) ; stop 134214845 ; couverture 64 $ [('BNBUSDT', 0.02), ('ETHUSDT', 0.007), ('SOLUSDT', 0.16), ('DOGEUSDT', 208.0)] ; part de la repartition 64 $ ; taille 64 $ (compte 186 $, w = min(1, 8% / vol 5.6%)), marge deja bloquee 18 $, short deja ouvert 41 $ (limite : taille cible)
