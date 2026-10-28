@@ -1,2 +1,0 @@
-SORTIE FICTIVE (clos) aster:ATUSDT : short -47 pb, couverture -64 pb, total -111 pb | test sequentiel (v1.1, pondere) : n 10, S +0.599, bornes [-1.25 ; +1.42] -> en cours
-SORTIE REEL ATUSDT : -0.94 $ (-109 pb du notionnel)
