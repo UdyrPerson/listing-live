@@ -43,12 +43,13 @@ def sizing(journal, eq, px):
     d'entree. Etat des comptes : short reel au prix du moment, moins les positions sorties avant l'entree du signal, plus les parts deja
     prevues ; marge estimee aux leviers du pilote. Estimation : les montants reels se fixent a l'entree, sur l'etat lu sur l'exchange."""
     E = {ex: rows[-1][1] for ex, rows in eq.items() if rows}
+    by_id = {j["id"]: j for j in journal}                                # ligne jumelle : w de sa ligne principale, comme step()
     mk, out, held = 1 / ll.LEV_SHORT + 1 / ll.LEV_HEDGE, {}, []          # held : (exchange, short en $, sortie prevue)
     for j in journal:
         if j["r_size"] and j["r_net_usd"] == "" and j["exch"] in E:
             held.append((j["exch"], float(j["r_size"]) * (px.get(j["exch"], {}).get(j["coin"]) or float(j["r_px_in"])), int(j["exit_ts"] or 0)))
             part, lim = re.search(r"part de la repartition (\d+) \$", j["r_note"]), re.search(r"limite : ([^)]+)\)", j["r_note"])
-            out[j["id"]] = {"w": round(ll.weight(j), 3), "part": float(part.group(1)) if part else None, "limit": lim.group(1) if lim else None}
+            out[j["id"]] = {"w": round(ll.weight(by_id.get(j["twin"], j)), 3), "part": float(part.group(1)) if part else None, "limit": lim.group(1) if lim else None}
     usage = {ex: {"value": round(v, 2), "short": round(sum(z for e, z, _ in held if e == ex), 2), "n": sum(e == ex for e, _, _ in held)} for ex, v in E.items()}
     for ex, u in usage.items():
         u["pct"] = round(u["short"] / u["value"], 3)
@@ -161,6 +162,8 @@ def main():
     except Exception as e:
         print("prix Aster indisponibles :", type(e).__name__)
     snap = build(journal, eq, px, int(time.time()), (ll.LIVE / "STOP").exists())
+    snap["pass_ts"] = int((ll.LIVE / "journal.csv").stat().st_mtime)   # dernier passage du bot : etat des trades ; ts = prix du moment (minuteur listing-publish)
+    snap["px_ok"] = sorted(px)
     url, key, token = (os.environ.get(k) for k in ("SUPABASE_URL", "SUPABASE_KEY", "SUPABASE_TOKEN"))
     if not (url and key and token):
         print("pas de Supabase configure : instantane non envoye ;", len(json.dumps(snap)), "octets,", len(snap["open"]), "positions,", len(snap["pnl"]), "points de PnL")
@@ -196,6 +199,9 @@ def _selftest():
     assert z["e"]["w"] == 0.5 and z["e-aster"]["w"] == 0.5 and z["e"]["target"] == round(0.5 * 0.5 * (149 + 153.53), 1)   # w de la ligne principale
     assert abs(z["e"]["plan"] + z["e-aster"]["plan"] - z["e"]["target"]) < 0.2 and z["e-aster"]["plan"] > z["e"]["plan"]     # Aster, moins charge, recoit plus
     assert z["a"]["w"] == 1.0 and z["a"]["part"] is None
+    tw = [x | {"status": "ouvert", "r_size": "10", "r_px_in": "1", "exit_ts": "9000"} for x in sig]
+    z2, _ = sizing(tw, {"hl": [(1, 149.0)], "aster": [(1, 153.53)]}, {})
+    assert z2["e-aster"]["w"] == z2["e"]["w"] == 0.5                                                  # position jumelle : w de la principale
     print("self-check ok")
 
 

@@ -1,0 +1,16 @@
+# /etc/systemd/system/listing-publish.service : instantane du tableau de bord (ops/publish.py) entre deux passages du direct.
+# Ne lit que live/ et des prix publics ; n'ecrit que dans Supabase. Aucune cle d'exchange, aucun git. Lance par listing-publish.timer.
+[Unit]
+Description=listing-live : instantane du tableau de bord, chaque minute (prix du moment)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=listing
+Group=listing
+WorkingDirectory=/opt/listing-live/repo
+ExecStart=/bin/sh -c '[ -r /opt/listing-live/supabase ] || exit 0; set -a; . /opt/listing-live/supabase; set +a; exec timeout 50 /opt/listing-live/venv/bin/python ops/publish.py'
+Environment=PYTHONDONTWRITEBYTECODE=1
+Nice=10
+MemoryMax=200M

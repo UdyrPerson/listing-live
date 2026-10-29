@@ -1,0 +1,11 @@
+# /etc/systemd/system/listing-publish.timer : chaque minute, a la seconde 30 (le passage du direct publie aussi a sa fin).
+[Unit]
+Description=listing-live : instantane du tableau de bord chaque minute
+
+[Timer]
+OnCalendar=*:*:30
+AccuracySec=5s
+Persistent=false
+
+[Install]
+WantedBy=timers.target
