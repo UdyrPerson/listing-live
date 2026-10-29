@@ -148,6 +148,35 @@ def build(journal, eq, px, now, stop=False):
             "trades": trade_rows(journal, px, size), "usage": usage}
 
 
+STATE = ll.LIVE.parent / ".publish_pass.json"   # latent des positions reelles au passage du bot (hors git : .gitignore)
+
+
+def latents(snap):
+    """{exch: {id: latent reel en $ ou None}} des positions reelles ouvertes."""
+    out = {}
+    for x in snap["trades"]:
+        if x.get("real") and x["real"]["open"]:
+            out.setdefault(x["exch"], {})[x["id"]] = x["real"].get("latent")
+    return out
+
+
+def live_values(snap, state):
+    """Valeur des comptes entre deux passages = valeur releve au dernier passage + variation du latent des positions reelles depuis.
+    Seulement si l'etat sauve correspond a ce releve (meme horodatage), avec les memes positions et tous leurs prix, maintenant et au
+    passage ; sinon la valeur du passage reste. Ajoute un point au PnL a l'instant du releve. Hors frais et funding de l'intervalle."""
+    lat, est = latents(snap), {}
+    for ex, a in snap["accounts"].items():
+        then, cur = ((state or {}).get("latent") or {}).get(ex, {}), lat.get(ex, {})
+        if (state or {}).get("eq_ts", {}).get(ex) == a["ts"] and set(then) == set(cur) and None not in [*then.values(), *cur.values()]:
+            a["value_pass"], a["est"] = a["value"], True
+            a["value"] = est[ex] = round(a["value"] + sum(cur.values()) - sum(then.values()), 2)
+    if est and snap["pnl"] and snap["ts"] > snap["pnl"][-1][0]:
+        v = {ex: snap["accounts"][ex]["value"] - BASE[ex] for ex in ("hl", "aster") if ex in snap["accounts"]}
+        last = snap["pnl"][-1]
+        row = [snap["ts"], round(v.get("hl", last[1]), 2), round(v.get("aster", last[2]), 2)]
+        snap["pnl"].append(row + [round(row[1] + row[2], 2)])
+
+
 def main():
     with open(ll.LIVE / "journal.csv", encoding="utf-8", newline="") as f:
         journal = list(csv.DictReader(f))
@@ -164,6 +193,13 @@ def main():
     snap = build(journal, eq, px, int(time.time()), (ll.LIVE / "STOP").exists())
     snap["pass_ts"] = int((ll.LIVE / "journal.csv").stat().st_mtime)   # dernier passage du bot : etat des trades ; ts = prix du moment (minuteur listing-publish)
     snap["px_ok"] = sorted(px)
+    if os.environ.get("PUBLISH_PASS") == "1":                         # fin de passage (run.sh) : on fixe le latent de reference
+        STATE.write_text(json.dumps({"ts": snap["ts"], "eq_ts": {ex: a["ts"] for ex, a in snap["accounts"].items()}, "latent": latents(snap)}))
+    else:
+        try:
+            live_values(snap, json.loads(STATE.read_text()) if STATE.exists() else None)
+        except (ValueError, KeyError) as e:
+            print("estimation des comptes impossible :", type(e).__name__)
     url, key, token = (os.environ.get(k) for k in ("SUPABASE_URL", "SUPABASE_KEY", "SUPABASE_TOKEN"))
     if not (url and key and token):
         print("pas de Supabase configure : instantane non envoye ;", len(json.dumps(snap)), "octets,", len(snap["open"]), "positions,", len(snap["pnl"]), "points de PnL")
@@ -199,6 +235,14 @@ def _selftest():
     assert z["e"]["w"] == 0.5 and z["e-aster"]["w"] == 0.5 and z["e"]["target"] == round(0.5 * 0.5 * (149 + 153.53), 1)   # w de la ligne principale
     assert abs(z["e"]["plan"] + z["e-aster"]["plan"] - z["e"]["target"]) < 0.2 and z["e-aster"]["plan"] > z["e"]["plan"]     # Aster, moins charge, recoit plus
     assert z["a"]["w"] == 1.0 and z["a"]["part"] is None
+    st = {"eq_ts": {"hl": 7300, "aster": 7200}, "latent": {"hl": {"a": 4.0}}}
+    s2 = build(rows, {"hl": [(3600, 151.0), (7300, 149.0)], "aster": [(7200, 153.53)]}, {"hl": {"X": 1.5, "ETH": 2000.0, "SOL": 100.0}}, 9999)
+    live_values(s2, st)                                                                                # latent 4 $ au passage, 5 $ maintenant (short 10 x (2 - 1,5))
+    assert s2["accounts"]["hl"] == {"ts": 7300, "value": 150.0, "value_pass": 149.0, "est": True} and s2["accounts"]["aster"]["value"] == 153.53
+    assert s2["pnl"][-1] == [9999, 0.0, 1.0, 1.0], s2["pnl"]
+    s3 = build(rows, {"hl": [(3600, 151.0), (7300, 149.0)], "aster": [(7200, 153.53)]}, {"hl": {"X": 1.5, "ETH": 2000.0, "SOL": 100.0}}, 9999)
+    live_values(s3, {"eq_ts": {"hl": 3600}, "latent": {"hl": {"a": 1.0}}})                               # etat d'un autre passage : rien
+    assert s3["accounts"]["hl"]["value"] == 149.0 and "est" not in s3["accounts"]["hl"]
     tw = [x | {"status": "ouvert", "r_size": "10", "r_px_in": "1", "exit_ts": "9000"} for x in sig]
     z2, _ = sizing(tw, {"hl": [(1, 149.0)], "aster": [(1, 153.53)]}, {})
     assert z2["e-aster"]["w"] == z2["e"]["w"] == 0.5                                                  # position jumelle : w de la principale
