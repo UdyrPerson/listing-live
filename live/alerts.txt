@@ -1,0 +1,4 @@
+ENTREE FICTIVE short hl:STABLE a 0.027115829324533044 (spread 2.9 pb, glissement 1 k$ 4.85 pb, 5 k$ 11.15 pb)
+ENTREE FICTIVE short aster:STABLEUSDT (jumelle) a 0.027124771789853275 (spread 18.4 pb, glissement 1 k$ 11.13 pb, 5 k$ 22.17 pb)
+ENTREE REEL short 3263.0 STABLE a 0.027123 (89 $) ; stop 588996503649 ; couverture 88 $ [('BNB', 0.03), ('ETH', 0.0096), ('SOL', 0.22), ('DOGE', 285.0)] ; part de la repartition 89 $ ; taille 89 $ (compte 178 $, w = min(1, 8% / vol 4.1%)), marge deja bloquee 39 $, short deja ouvert 89 $ (limite : plafond d'exposition)
+ENTREE REEL short 3397.0 STABLEUSDT a 0.0271 (92 $) ; stop 438606370 ; couverture 92 $ [('BNBUSDT', 0.03), ('ETHUSDT', 0.01), ('SOLUSDT', 0.23), ('DOGEUSDT', 306.0)] ; part de la repartition 92 $ ; taille 92 $ (compte 190 $, w = min(1, 8% / vol 1.3%)), marge deja bloquee 43 $, short deja ouvert 98 $ (limite : plafond d'exposition)
