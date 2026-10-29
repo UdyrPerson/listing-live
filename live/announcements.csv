@@ -35,3 +35,4 @@ ts,venue,market,ticker,n_tickers,head,source
 1793023622,coinbase,spot,RITUAL,1,⚡️Coinbase将上线Ritual (RITUAL),theblockbeats
 1793086200,upbit,spot_krw,NIL,1,닐리온(NIL) KRW 마켓 디지털 자산 추가,upbit_api
 1793116322,coinbase,spot,STABLE,1,Coinbase将上线Stable(STABLE)现货交易,theblockbeats
+1793274532,binance,spot,PREDICT,1,Binance Will List Predict (PREDICT) with Seed Tag Applied,binance_cms
