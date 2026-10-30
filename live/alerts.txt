@@ -1,0 +1,2 @@
+SORTIE FICTIVE (clos) aster:BMTUSDT : short +1614 pb, couverture -473 pb, total +1141 pb | test sequentiel (v1.1, pondere) : n 11, S +0.652, bornes [-1.25 ; +1.43] -> en cours
+SORTIE REEL BMTUSDT : +5.11 $ (+1185 pb du notionnel)
