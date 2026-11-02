@@ -1,0 +1,4 @@
+SORTIE FICTIVE (clos) hl:NIL : short +2010 pb, couverture -801 pb, total +1209 pb | test sequentiel (v1.1, pondere) : n 12, S +0.762, bornes [-1.24 ; +1.44] -> en cours
+SORTIE FICTIVE (clos) aster:NILUSDT : short +1857 pb, couverture -800 pb, total +1057 pb | test sequentiel (v1.1, pondere) : n 12, S +0.762, bornes [-1.24 ; +1.44] -> en cours
+SORTIE REEL NIL : +11.80 $ (+1211 pb du notionnel)
+SORTIE REEL NILUSDT : +6.84 $ (+1062 pb du notionnel)
