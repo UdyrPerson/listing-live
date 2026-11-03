@@ -651,31 +651,66 @@ def real_exit(j, ctx, broker, positions, alerts):
                 fill = gone_fill(broker, coin, int(j["t_in"]))      # ponytail: la moyenne lue inclut un eventuel rachat partiel du programme
                 j |= {"r_px_out": (done[0] * done[1] + (size - done[0]) * (fill[1] if fill else stop_px)) / size,
                       "r_note": "rachete hors du programme : " + ("prix lu sur l'exchange" if fill else "prix estime au stop, A VERIFIER")}
+                if fill and fill[0] >= size - 1e-9:                 # rachats lus = tout le short (ADL, stop sur le mark) : le stop de l'entree
+                    try:                                            # frapperait un futur short du coin
+                        broker.cancel_all(coin)
+                    except Exception as e:
+                        alerts.append(f"STOP DE {coin} PEUT-ETRE ENCORE POSE ({type(e).__name__}) : a annuler a la main")
+                else:                                               # disparition non confirmee par les rachats (etat incomplet ?) : le stop reste
+                    alerts.append(f"STOP DE {coin} GARDE : rachats lus insuffisants, le short est peut-etre encore ouvert -> a verifier a la main")
             else:
                 left = 0.0 if complete else -positions.get(coin, 0.0) if broker.live else size - done[0]
                 if left > 1e-12:
-                    filled, px = broker.market(coin, "buy", round(left, 10), book_snapshot(j["exch"], coin)["ask"], reduce=True)
-                    done = [done[0] + filled, (done[0] * done[1] + filled * px) / (done[0] + filled)]
-                    j["r_out"] = json.dumps(done)
-                    checkpoint()
-                    if filled < left - 1e-9:
-                        raise RuntimeError(f"rachat partiel ({done[0]:g} sur {size:g}) : stop maintenu, suite au prochain passage")
-                broker.cancel_all(coin)
-                j["r_px_out"] = done[1]
-        sold = {x[0]: x for x in json.loads(j["r_legs_out"] or "[]")}
+                    ask = book_snapshot(j["exch"], coin)["ask"]
+                    try:
+                        filled, px = broker.market(coin, "buy", round(left, 10), ask, reduce=True)
+                    except Exception:
+                        if not broker.live or left * ask >= MIN_LEG[j["exch"]]:
+                            raise
+                        fill = gone_fill(broker, coin, int(j["t_in"]))  # reste (ADL partiel) sous l'ordre minimum ET refuse : le relancer bloquerait
+                        j |= {"r_px_out": fill[1] if fill else ask, "r_note": f"reste du short ({left:g}) sous l'ordre minimum, refuse, stop garde : a solder a la "
+                              "main ; prix " + ("lu sur l'exchange" if fill else "estime, A VERIFIER")}       # la couverture a chaque passage
+                        alerts.append(f"RESTE DU SHORT {coin} SOUS LE MINIMUM ({left * ask:.2f} $) REFUSE : a solder a la main (stop garde) ; la couverture sort")
+                    else:
+                        done = [done[0] + filled, (done[0] * done[1] + filled * px) / (done[0] + filled)]
+                        j["r_out"] = json.dumps(done)
+                        checkpoint()
+                        if filled < left - 1e-9:
+                            raise RuntimeError(f"rachat partiel ({done[0]:g} sur {size:g}) : stop maintenu, suite au prochain passage")
+                if j["r_px_out"] == "":                             # short entierement rachete (pas le cas du reste refuse) : le stop n'a plus d'objet
+                    broker.cancel_all(coin)
+                    j["r_px_out"] = done[1]
+        sold, errs = {x[0]: x for x in json.loads(j["r_legs_out"] or "[]")}, []
         for c, lsize, lpx in json.loads(j["r_legs"] or "[]"):
             q0 = done_qty(sold[c], lsize) if c in sold else 0.0
             if lsize - q0 <= 1e-12:
                 continue
-            if broker.live and c not in positions:                 # plus aucune position sur ce coin (radie, liquide) : rien a vendre, prix estime
-                sold[c] = [c, price(ctx, c, lpx), lsize]
+            old = sold[c][1] * q0 if c in sold else 0.0             # part deja vendue, a son prix moyen
+            if broker.live and c not in positions:                 # plus aucune position sur ce coin (radie, liquide, ADL) : rien a vendre, prix estime
+                sold[c] = [c, (old + price(ctx, c, lpx) * (lsize - q0)) / lsize, lsize]
             else:
-                filled, px = broker.market(c, "sell", round(lsize - q0, 10), price(ctx, c, lpx), reduce=True)
-                sold[c] = [c, ((sold[c][1] * q0 if c in sold else 0.0) + px * filled) / (q0 + filled), q0 + filled]
+                try:                                                # une ligne en echec ne laisse pas les suivantes ouvertes (jambe orpheline)
+                    ref = price(ctx, c, 0.0) or book_snapshot(j["exch"], c)["bid"]      # prix du lieu absents (passage reduit) : le carnet, jamais le prix
+                    want, held = lsize - q0, positions[c] if broker.live else lsize - q0    # d'entree (un IOC a 1 % sous lui ne s'execute pas en krach)
+                    try:
+                        filled, px = broker.market(c, "sell", round(want, 10), ref, reduce=True)
+                    except Exception:
+                        if want <= held + 1e-12:
+                            raise
+                        filled, px = broker.market(c, "sell", round(held, 10), ref, reduce=True)    # ligne reduite par un ADL, taille due refusee : le tenu
+                    sold[c] = [c, (old + px * filled) / (q0 + filled), q0 + filled]
+                except Exception as e:
+                    errs.append(f"{c} : {e}")
+                    continue
             j["r_legs_out"] = json.dumps(list(sold.values()))
-            checkpoint()
+            checkpoint()                                            # hors du try : un etat non sauvegarde arrete la sortie, comme avant
             if done_qty(sold[c], lsize) < lsize - 1e-9:
-                raise RuntimeError(f"vente partielle de {c} ({done_qty(sold[c], lsize):g} sur {lsize:g}), suite au prochain passage")
+                errs.append(f"vente partielle de {c} ({done_qty(sold[c], lsize):g} sur {lsize:g})")
+        if errs:
+            raise RuntimeError(" ; ".join(errs) + ", suite au prochain passage")
+        if not (j["r_t_out"] or j["t_out"]):                       # short disparu, sortie fictive reportee (step, etape 4) : couverture vendue,
+            alerts.append(f"SORTIE {j['real'].upper()} {coin} : short disparu, couverture vendue ; bilan a la sortie fictive")    # bilan plus tard
+            return
         px_out, out, t_in, t_out = float(j["r_px_out"]), {c: float(x[1]) for c, x in sold.items()}, int(j["t_in"]), int(j["r_t_out"] or j["t_out"])
         fee, ex = TAKER[j["exch"]], j["exch"]
         usd = size * (px_in - px_out) - fee * size * (px_in + px_out) + size * px_in * funding_sum(ex, coin, t_in, t_out)
@@ -694,6 +729,7 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
     """Fait avancer le journal. ctx = {perp Hyperliquid: contexte de marche} ; aster_syms = {ticker: symbole Aster} ; broker = {exchange: courtier} (un
     courtier seul vaut pour Hyperliquid), ou None ; actx = {symbole Aster: {"midPx": prix}}."""
     brokers = dict(broker) if isinstance(broker, dict) else {"hl": broker} if broker else {}
+    exits_only, ctx = ctx is None, ctx or {}                        # ctx None (main : API publique de HL en panne) : ni annonce ni entree, sorties seulement
     pctx = {"hl": ctx, "aster": actx or {}}
     positions = {}                                                  # etat des comptes AVANT ce passage : ne sert qu'aux positions ouvertes a un passage precedent
     for ex, b in list(brokers.items()):
@@ -709,7 +745,7 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
         if why and not j["pop"]:
             j["pop"] = why
     busy = {(fam(j), j["ticker"]) for j in journal if j["status"] in ("signal", "ouvert")}
-    for a in new_ann:                                               # 1. nouvelles annonces -> signal ou ineligible
+    for a in [] if exits_only else new_ann:                         # 1. nouvelles annonces -> signal ou ineligible
         t, tick, perp = int(a["ts"]), a["ticker"].upper(), a.get("market") == "perp"
         coin = hl_coin(tick, ctx)
         exch, coin = ("hl", coin) if coin else ("aster", (aster_syms or {}).get(tick))
@@ -808,6 +844,7 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
         return value, sum(-z * price(pctx[ex], c, 0.0) for c, z in have.items() if z < 0), used, MIN_LEG[ex]
 
     early = early_requests(now)
+    held0 = {j["id"] for j in journal if j["r_size"] != ""}         # lignes reelles avant ce passage (une entree de ce passage n'est pas dans `positions`)
     for j in journal:                                               # 1 bis. sorties reelles anticipees (live/EXIT_EARLY), AVANT les entrees ; le fictif continue
         b = brokers.get(j["exch"])
         if b and j["id"] in early and j["r_size"] != "" and j["r_net_usd"] == "" and j["status"] == "ouvert":
@@ -817,7 +854,7 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
                 alerts.append(f"SORTIE REELLE ANTICIPEE {j['exch']}:{j['coin']} (la ligne fictive continue jusqu'a sa sortie)")
             real_exit(j, pctx[j["exch"]], b, positions.get(j["exch"], {}), alerts)
     done, by_id = set(), {x["id"]: x for x in journal}
-    for j in journal:                                               # 2. entrees dues, par SIGNAL : la ligne principale et sa jumelle ensemble
+    for j in [] if exits_only else journal:                         # 2. entrees dues, par SIGNAL : la ligne principale et sa jumelle ensemble
         if j["id"] in done or j["status"] != "signal" or now < int(j["entry_ts"]):
             continue
         if j["twin"] and by_id.get(j["twin"], {}).get("status") == "signal":
@@ -907,7 +944,7 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
         alerts.append(f"SORTIE FICTIVE ({status}) {j['exch']}:{j['coin']} : short {short * 1e4:+.0f} pb, couverture {hedge * 1e4:+.0f} pb, total {total * 1e4:+.0f} pb | "
                       f"test sequentiel (v1.1, pondere) : n {n}, S {S:+.3f}, bornes [{SPRT_DRIFT * n - SPRT_BOUND:+.2f} ; {SPRT_DRIFT * n + SPRT_BOUND:+.2f}] -> {verdict}")
     late = early_requests(now, "ENTER_LATE")
-    for j in journal:                                               # 3 bis. entree reelle apres coup, APRES les entrees prevues de ce passage (elles passent d'abord) :
+    for j in [] if exits_only else journal:                         # 3 bis. entree reelle apres coup, APRES les entrees prevues de ce passage (elles passent d'abord) :
         b = brokers.get(j["exch"])                                  # nouvel essai d'une entree en echec (LATE_S) ; signal refuse faute de place, repris
         held = any(x["r_size"] != "" for x in journal if (x["twin"] or x["id"]) == (j["twin"] or j["id"]))     # automatiquement si la place revient dans les
         why = ("NOUVEL ESSAI D'ENTREE REELLE" if j["r_note"].startswith("entree en echec") and now <= int(j["entry_ts"]) + LATE_S          # AUTO_LATE_S apres
@@ -927,9 +964,11 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
             alerts.append(f"{why} {j['exch']}:{j['coin']}")
             real_enter(j, s, pctx[j["exch"]], b, journal, alerts, legs if j["exch"] == "hl" else [aster_syms[c] for c in legs if c in (aster_syms or {})],
                        target=alloc[j["exch"]])
-    for j in journal:                                               # 4. sorties du pilote, y compris celles restees incompletes a un passage precedent
-        b = brokers.get(j["exch"])
-        if b and j["r_size"] != "" and j["r_net_usd"] == "" and j["status"] in ("clos", "stoppe"):
+    for j in journal:                                               # 4. sorties du pilote, y compris celles restees incompletes a un passage precedent ;
+        b, pos = brokers.get(j["exch"]), positions.get(j["exch"])   # jambe orpheline : short disparu (ADL...) et sortie fictive reportee (API publique
+        orphan = (j["status"] == "ouvert" and j["real"] == "reel" and not j["r_t_out"] and j["id"] in held0 and pos is not None    # en panne) : la
+                  and j["coin"] not in pos and expected([j], "reel", j["exch"]) != {})    # couverture sort sans attendre (adl-revue.md)
+        if b and j["r_size"] != "" and j["r_net_usd"] == "" and (j["status"] in ("clos", "stoppe") or orphan):
             real_exit(j, pctx[j["exch"]], b, positions.get(j["exch"], {}), alerts)
     for ex, b in brokers.items():                                   # 5. rapprochement, sur l'etat de chaque compte APRES les ordres de ce passage
         if b.live:
@@ -945,8 +984,13 @@ def main():
     have = [(int(r["ts"]), r["venue"], r["market"], r["ticker"], int(r["n_tickers"]), r["head"], r["source"]) for r in known]
     merged = lf.dedup(have + [r for r in collect(now, alerts) if r not in have])          # tri par date : une annonce connue garde la priorite sur sa redite
     fresh = [dict(zip(A_COLS, r)) for r in merged if r not in have]
-    meta, ctxs = info({"type": "metaAndAssetCtxs"})
-    ctx = {u["name"]: c for u, c in zip(meta["universe"], ctxs) if not u.get("isDelisted")}
+    try:
+        meta, ctxs = info({"type": "metaAndAssetCtxs"})
+        ctx = {u["name"]: c for u, c in zip(meta["universe"], ctxs) if not u.get("isDelisted")}
+    except Exception as e:                                                      # API publique de HL en panne : les sorties (Aster, jambe orpheline) passent
+        alerts.append(f"HYPERLIQUID INJOIGNABLE ({type(e).__name__}) : passage reduit aux sorties ; annonces relues au prochain passage, sauf un marche KRW "
+                      "apparu pendant la panne (detecteur deja a jour)")
+        ctx, merged, fresh = None, have, []                                     # rien de nouveau : les annonces des fils et des API reviennent au suivant
     try:
         aster_syms = aster_bases(aster_symbols())
     except Exception as e:                                                      # Aster n'est qu'un releve fictif : son absence ne bloque rien
@@ -959,8 +1003,11 @@ def main():
         actx = {}
     journal = read("journal.csv", J_COLS)
     first_run = not (LIVE / "announcements.csv").exists()
+    def save_ann():                                                             # passage reduit : etat des annonces inchange (un live/ vierge reste a
+        if ctx is not None:                                                     # amorcer, sinon 7 j d'annonces seraient rejouees au passage suivant)
+            write("announcements.csv", A_COLS, [dict(zip(A_COLS, r)) for r in merged])
     global SAVE                                                                 # annonces ET journal : les signaux crees a ce passage restent lies a leur annonce
-    SAVE = lambda: (write("announcements.csv", A_COLS, [dict(zip(A_COLS, r)) for r in merged]), write("journal.csv", J_COLS, journal))
+    SAVE = lambda: (save_ann(), write("journal.csv", J_COLS, journal))
     brokers = {}
     for ex, mod, fn in (("hl", "listing_broker", "connect"), ("aster", "listing_broker_aster", "connect_aster")):
         try:
@@ -973,7 +1020,7 @@ def main():
         step(now, journal, [] if first_run else fresh, alerts, ctx, aster_syms, brokers, actx)     # premier passage : on amorce l'etat sans rejouer la semaine ecoulee
     except Exception as e:                                                      # le journal est modifie en place : ce qui a ete fait (ordres compris) est ecrit quand meme
         alerts.append(f"PASSAGE INTERROMPU ({type(e).__name__}) : etat sauvegarde, reprise au prochain passage")
-    write("announcements.csv", A_COLS, [dict(zip(A_COLS, r)) for r in merged])      # d'abord l'etat : plus rien apres ne doit pouvoir le perdre
+    save_ann()                                                                  # d'abord l'etat : plus rien apres ne doit pouvoir le perdre
     write("journal.csv", J_COLS, journal)
     values = {}
     for ex, b in brokers.items():
@@ -1075,6 +1122,12 @@ def _selftest():
         def market(self, coin, side, size, ref, reduce=False):
             if (coin, side) in self.fail:
                 raise RuntimeError("refus simule")
+            if reduce and getattr(self, "strict", False) and size > abs(self.pos.get(coin, 0.0)) + 1e-12:
+                raise RuntimeError("reduce-only plus gros que la position")
+            if reduce and size * ref < getattr(self, "minimum", 0.0):
+                raise RuntimeError("reduce-only sous l'ordre minimum")
+            if reduce and getattr(self, "cap", False):                                            # lieu qui ramene un reduce-only a la position
+                size = min(size, abs(self.pos.get(coin, 0.0)))
             size = round(size * self.part.pop((coin, side), 1.0), 10)                             # execution partielle simulee, une seule fois
             self.sent.append((coin, side, size, reduce))
             self.pos[coin] = round(self.pos.get(coin, 0.0) + (size if side == "buy" else -size), 10)
@@ -1146,6 +1199,7 @@ def _selftest():
     b6.buys_since = lambda coin, since: (75.0, 1.2, t + 5000)                                     # ADL ou stop sur le mark a 1,2 : pas un stop a +50 %
     step(t + 7260, [s6], [], [], ctx2, {}, b6)
     assert s6["status"] == "clos" and s6["px_out"] == 1.2 and s6["t_out"] == t + 5000 and s6["pop"] == "" and s6["r_px_out"] == 1.2 and "prix lu" in s6["r_note"]
+    assert b6.cancels == 1 and b6.pos == {}                                                       # A : stop de l'entree annule, couverture vendue au meme passage
     bo, one = Fake(live=True), candles                                                            # signal hors population : fictif seulement, aucun ordre
     candles = lambda exch, coin, a, b: [{"t": (b - 3 * 86400 + 300 * i) * 1000, "T": (b - 3 * 86400 + 300 * i + 300) * 1000, "o": "1", "h": "1.001",
                                          "c": "1.001" if i % 2 else "0.999"} for i in range(864)]     # perp preexistant : eligible
@@ -1187,7 +1241,7 @@ def _selftest():
     assert jt[0]["r_size"] == 75.0 and any("TARDIVE AUTOMATIQUE" in x for x in aa3) and jt[2]["r_size"] == "", aa3
     early_requests = lambda now, name="EXIT_EARLY": {"late"} if name == "ENTER_LATE" else set()
     step(t + 60, [sl], [], [], ctx2, {}, bl)
-    assert sl["r_size"] == 75.0 and bl.pos["SUI"] == -75.0                                        # entree tardive demandee : ordre reel
+    assert sl["r_size"] == 75.0 and bl.pos["SUI"] == -75.0 and expected([sl]) == bl.pos           # entree tardive demandee : ordre reel, pas une orpheline
     sm = dict(sl) | {c: "" for c in R_COLS} | {"id": "late", "t_ann": t - MAX_LATE_S - 60, "r_note": "cible : part nulle"}
     step(t + 60, [sm], [], [], ctx2, {}, Fake(live=True))
     assert sm["r_size"] == ""                                                                     # au-dela de 60 h apres l'annonce : jamais
@@ -1238,6 +1292,7 @@ def _selftest():
     assert s4["r_px_out"] == "" and b4.cancels == 0 and b4.pos["SUI"] == -45.0 and expected(j4) == b4.pos and not [x for x in a4 if "ECART" in x]    # le stop reste
     step(t + HOLD_S + 3660, j4, [], [], ctx2, {}, b4)
     assert s4["r_px_out"] != "" and b4.cancels == 1 and s4["r_net_usd"] == "" and abs(b4.pos["ETH"] - lsz["ETH"] / 2) < 1e-9 and expected(j4) == b4.pos
+    assert set(b4.pos) == {"ETH"}                                                                 # vente partielle d'ETH : SOL et DOGE sortent quand meme
     step(t + HOLD_S + 7260, j4, [], [], ctx2, {}, b4)
     assert s4["r_net_usd"] != "" and b4.pos == {} and abs(sum(z for c, sd, z, _ in b4.sent if (c, sd) == ("ETH", "sell")) - lsz["ETH"]) < 1e-9
     assert sum(z for c, sd, z, _ in b4.sent if (c, sd) == ("SUI", "buy")) == 75.0                 # jamais rachete deux fois
@@ -1290,6 +1345,113 @@ def _selftest():
     jg, ag = [row("g", "GONE"), row("o", "SUI")], []
     step(t + 100, jg, [], ag, ctx2, {}, None)
     assert jg[0]["status"] == "ouvert" and jg[1]["status"] == "clos" and any("REPORTEE" in x for x in ag)
+
+    # jambe orpheline (research/listing-f14/adl-revue.md) ; les bougies de SUI restent lisibles (candles_gone)
+    def adl(bid):
+        f = Fake(live=True)
+        s = dict(sig) | {c: "" for c in R_COLS} | {"status": "signal", "t_in": "", "t_out": "", "px_out": "", "net_hedged": "", "id": bid}   # sig est sorti plus haut
+        step(t + 60, [s], [], [], ctx2, {}, f)
+        return f, s
+    b7, s7 = adl("adl-a")                                                                         # A : short ferme par ADL, annulation du stop refusee
+    del b7.pos["SUI"]
+    b7.buys_since = lambda coin, since: (75.0, 0.8, t + 5000)
+    def refuse(coin):
+        raise RuntimeError("0x" + "ab" * 20)
+    b7.cancel_all, a7 = refuse, []
+    step(t + 7260, [s7], [], a7, ctx2, {}, b7)
+    assert b7.pos == {} and s7["r_net_usd"] != "" and any("PEUT-ETRE ENCORE POSE (RuntimeError)" in x for x in a7) and "abab" not in " ".join(a7), a7
+    for got in (None, (30.0, 1.1, t + 5000)):                                                     # A : disparition non confirmee (etat incomplet, rachat partiel lu)
+        b10, s10 = adl("adl-faux")
+        del b10.pos["SUI"]
+        b10.buys_since, a10 = (lambda coin, since: got), []
+        step(t + 7260, [s10], [], a10, ctx2, {}, b10)
+        assert b10.cancels == 0 and any("STOP DE SUI GARDE" in x for x in a10), a10              # le stop de protection reste pose
+    b8, s8 = adl("adl-d")                                                                         # D : la 1re ligne (BNB) refuse de se vendre, les autres sortent
+    b8.fail, a8 = {(HEDGE[0], "sell")}, []
+    step(t + HOLD_S + 60, [s8], [], a8, ctx2, {}, b8)
+    assert set(b8.pos) == {HEDGE[0]} and s8["r_net_usd"] == "" and any("INCOMPLETE" in x for x in a8), (b8.pos, a8)
+    b8.fail = set()
+    step(t + HOLD_S + 960, [s8], [], [], ctx2, {}, b8)
+    assert b8.pos == {} and s8["r_net_usd"] != "" and sum(x[:2] == ("ETH", "sell") for x in b8.sent) == 1
+    b13, s13, calls = *adl("adl-ckpt"), []                                                        # D : etat non sauvegarde apres la 1re vente -> arret, comme avant
+    def ckpt():
+        calls.append(1)
+        if len(calls) == 2:
+            raise OSError("disque plein")
+    SAVE, a13 = ckpt, []
+    step(t + HOLD_S + 60, [s13], [], a13, ctx2, {}, b13)
+    SAVE = None
+    assert sum(x[1] == "sell" and x[3] for x in b13.sent) == 1 and any("INCOMPLETE" in x for x in a13), (b13.sent, a13)
+    b9, s9 = adl("adl-b")                                                                         # B : ligne ETH reduite de moitie par ADL, exchange strict
+    b9.pos["ETH"], b9.strict = round(b9.pos["ETH"] / 2, 10), True
+    step(t + HOLD_S + 60, [s9], [], [], ctx2, {}, b9)
+    assert s9["r_net_usd"] == "" and "ETH" not in b9.pos                                          # 1er passage : la moitie tenue est vendue
+    step(t + HOLD_S + 960, [s9], [], [], ctx2 | {"ETH": {"midPx": "1000"}}, {}, b9)               # ETH a 1 000 au 2e passage
+    assert s9["r_net_usd"] != "" and b9.pos == {}, (s9["r_note"], b9.pos)                        # 2e passage : la part absente est inscrite, sortie finie
+    assert abs(json.loads(s9["r_legs_out"])[1][1] - 1500) < 1e-6, s9["r_legs_out"]                # moitie vendue a 2 000, moitie inscrite a 1 000 : rien d'ecrase
+    b11, s11 = adl("adl-b2")                                                                      # B : lieu qui ramene un reduce-only a la position mais refuse
+    b11.pos["ETH"], b11.cap, b11.minimum = 0.002, True, 10.0                                      # un ordre sous 10 $ : reste de 4 $ apres l'ADL
+    for k in range(2):
+        step(t + HOLD_S + 60 + 900 * k, [s11], [], [], ctx2, {}, b11)
+    assert s11["r_net_usd"] != "" and b11.pos == {}, (s11["r_note"], b11.pos)                    # sort en deux passages (avant : refus sans fin)
+    b12, s12 = adl("adl-reste")                                                                   # reste du short sous le minimum apres un ADL partiel
+    b12.pos["SUI"], b12.minimum, a12 = -5.0, 10.0, []
+    b12.buys_since = lambda coin, since: (70.0, 1.1, t + 5000)
+    step(t + HOLD_S + 60, [s12], [], a12, ctx2, {}, b12)
+    assert set(b12.pos) == {"SUI"} and b12.cancels == 0 and s12["r_px_out"] == 1.1 and s12["r_net_usd"] != "" and any("SOUS LE MINIMUM" in x for x in a12), (b12.pos, a12)
+    b14, s14 = adl("adl-panne")                                                                   # ADL et bougies illisibles : la couverture sort au meme passage
+    del b14.pos["SUI"]
+    b14.buys_since, a14, keep_c = (lambda coin, since: (75.0, 0.8, t + 5000)), [], candles
+    def down(exch, coin, a, b_):
+        raise RuntimeError("Hyperliquid indisponible")
+    candles = down
+    step(t + 7260, [s14], [], a14, ctx2, {}, b14)
+    n14, a14b = len(b14.sent), []
+    step(t + 8160, [s14], [], a14b, ctx2, {}, b14)                                                # la panne dure : orpheline deja soldee, rien a refaire
+    candles = keep_c
+    assert s14["status"] == "ouvert" and b14.pos == {} and s14["r_px_out"] == 0.8 and s14["r_net_usd"] == "" and b14.cancels == 1, (b14.pos, a14)
+    assert any("REPORTEE" in x for x in a14) and any("couverture vendue" in x for x in a14), a14
+    assert len(b14.sent) == n14 and b14.cancels == 1 and not any("couverture vendue" in x for x in a14b), a14b
+    step(t + 9060, [s14], [], [], ctx2, {}, b14)                                                  # API revenue : sortie fictive au prix lu, bilan
+    assert s14["status"] == "clos" and s14["t_out"] == t + 5000 and s14["r_net_usd"] != ""
+    bq = Fake(live=True)                                                                          # API publique de HL en panne (main : ctx None) : orpheline
+    bq.pos, bq.buys_since = {h + "USDT": 0.01 for h in HEDGE}, (lambda coin, since: (75.0, 0.9, t + 5000))     # d'Aster vendue, aucune entree
+    sq = {c: "" for c in J_COLS} | {"id": "q-adl", "ticker": "Q", "exch": "aster", "coin": "QUSDT", "status": "ouvert", "t_ann": t - DELAY_S, "entry_ts": t,
+                                    "t_in": t, "exit_ts": t + HOLD_S, "px_in": 1.0, "legs": json.dumps(list(HEDGE)), "legs_px_in": json.dumps([600, 2000, 100, 0.2]),
+                                    "real": "reel", "r_size": 75.0, "r_px_in": 1.0, "r_stop": "stop", "r_legs": json.dumps([[h + "USDT", 0.01, 1.0] for h in HEDGE])}
+    due = sq | {c: "" for c in R_COLS} | {"id": "due", "ticker": "R", "coin": "RUSDT", "status": "signal", "t_in": "", "venue": "bithumb", "vol3d": "0.08"}   # signal
+    retry = sq | {c: "" for c in R_COLS} | {"id": "retry", "ticker": "P", "coin": "PUSDT", "r_note": "entree en echec : refus simule"}   # Aster du ; entree a reprendre (3 bis)
+    def hl_down(exch, coin, a, b_):
+        if exch == "hl":
+            raise RuntimeError("Hyperliquid indisponible")
+        return [{"t": a * 1000, "T": b_ * 1000, "o": "1", "h": "1.01", "c": "1"}]
+    candles, aq, jq, lf.ref_price = hl_down, [], [sq, due, retry], (lambda venue, market, ticker: 1.0)   # identite verifiable : sans les gardes, ils entreraient
+    step(t + 7260, jq, [{"ts": t, "venue": "upbit", "ticker": "ZZZ"}], aq, None, {}, {"aster": bq}, {})
+    candles, lf.ref_price = keep_c, ref_price
+    assert bq.pos == {} and sq["status"] == "ouvert" and sq["r_px_out"] == 0.9 and len(jq) == 3 and any("REPORTEE" in x for x in aq), aq
+    assert due["status"] == "signal" and retry["r_size"] == "", aq                                # ni entree prevue ni entree reprise
+    b15, s15 = adl("adl-f1")                                                                      # F : IOC partiel du programme, reste de 3 $ sous le minimum
+    b15.part, a15 = {("SUI", "buy"): 0.96}, []                                                    # de HL ; ce lieu l'accepte : rachete, stop annule
+    step(t + HOLD_S + 60, [s15], [], [], ctx2, {}, b15)
+    step(t + HOLD_S + 960, [s15], [], a15, ctx2, {}, b15)
+    assert b15.pos == {} and b15.cancels == 1 and sum(z for c, sd, z, _ in b15.sent if (c, sd) == ("SUI", "buy")) == 75.0 and not any("MINIMUM" in x for x in a15), a15
+    b16, s16 = adl("adl-hl-reduit")                                                               # HL : metaAndAssetCtxs en echec (ctx None), short disparu :
+    del b16.pos["SUI"]                                                                            # couverture vendue au carnet (faux : 1,0), pas au prix d'entree
+    b16.buys_since, candles = (lambda coin, since: (75.0, 0.9, t + 5000)), hl_down
+    step(t + 7260, [s16], [], [], None, {}, b16)
+    candles = keep_c
+    assert b16.pos == {} and s16["r_px_out"] == 0.9 and [x[1] for x in json.loads(s16["r_legs_out"])] == [1.0] * 4, s16["r_legs_out"]
+    b17, s17 = adl("adl-early")                                                                   # sortie anticipee en cours : une seule reprise par passage
+    early_requests, l17 = (lambda now, name="EXIT_EARLY": {"adl-early"} if name == "EXIT_EARLY" else set()), json.loads(s17["r_legs"])[1][1]
+    for k in range(2):
+        b17.part = {("ETH", "sell"): 0.5}
+        step(t + 3660 + 900 * k, [s17], [], [], ctx2, {}, b17)
+    early_requests = lambda now, name="EXIT_EARLY": set()
+    assert abs(b17.pos.get("ETH", 0.0) - l17 / 4) < 1e-9 and s17["r_net_usd"] == "", b17.pos     # pas d'orpheline (r_t_out) : pas de 2e vente
+    b18, s18 = adl("adl-sim")                                                                     # HL_LIVE repasse a 0, ligne reelle ouverte : compte non lu,
+    b18.live, a18 = False, []                                                                     # pas une orpheline
+    step(t + 7260, [s18], [], a18, ctx2, {}, b18)
+    assert s18["status"] == "ouvert" and not any("EN ATTENTE" in x for x in a18), a18
     print("self-check OK")
 
 
