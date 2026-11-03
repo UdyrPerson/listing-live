@@ -1,4 +1,0 @@
-SORTIE FICTIVE (clos) hl:STABLE : short +263 pb, couverture -550 pb, total -288 pb | test sequentiel (v1.1, pondere) : n 13, S +0.733, bornes [-1.23 ; +1.44] -> en cours
-SORTIE FICTIVE (clos) aster:STABLEUSDT : short +238 pb, couverture -550 pb, total -312 pb | test sequentiel (v1.1, pondere) : n 13, S +0.733, bornes [-1.23 ; +1.44] -> en cours
-SORTIE REEL STABLE : -2.40 $ (-272 pb du notionnel)
-SORTIE REEL STABLEUSDT : -2.87 $ (-312 pb du notionnel)
