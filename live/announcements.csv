@@ -37,4 +37,4 @@ ts,venue,market,ticker,n_tickers,head,source
 1793116322,coinbase,spot,STABLE,1,Coinbase将上线Stable(STABLE)现货交易,theblockbeats
 1793274532,binance,spot,PREDICT,1,Binance Will List Predict (PREDICT) with Seed Tag Applied,binance_cms
 1793858583,upbit,spot_krw,CARDS,1,"콜렉터크립트(CARDS) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",upbit_api
-1793861453,bithumb,spot_krw,MAGMA,1,【Bithumb 将上线 MAGMA 韩元交易对】,ForesightNews
+1793861440,bithumb,spot_krw,MAGMA,1,마그마파이낸스(MAGMA) 원화 마켓 추가,bithumb_api

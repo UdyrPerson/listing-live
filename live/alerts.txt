@@ -1,1 +1,1 @@
-ANNONCE bithumb MAGMA -> signal  | entree prevue 2026-11-06 19:00 UTC sur aster:MAGMAUSDT
+ANNONCE bithumb MAGMA -> ineligible deja un signal ou une position sur ce coin
