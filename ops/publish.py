@@ -7,8 +7,14 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import requests
 import listing_live as ll
 
-# ponytail: bases fixes ; un depot ou un transfert entre comptes les fausse -> les mettre a jour ici
-BASE = {"hl": 150.0, "aster": 152.53}      # apports nets : Hyperliquid 150 $ ; Aster 150 USDC + ~2,5 $ d'ETH (premier releve reel)
+BASE = {"hl": 150.0, "aster": 152.53}      # apports nets de depart : Hyperliquid 150 $ ; Aster 150 USDC + ~2,5 $ d'ETH (premier releve reel)
+# un depot (+), un retrait (-) ou un transfert entre comptes s'ajoute ici, jamais a BASE (qui fausserait tout l'historique) :
+# (ts du premier releve de equity*.csv qui l'inclut, montant recu)
+DEPOSITS = {"hl": [], "aster": []}
+
+
+def base(ex, t):
+    return BASE[ex] + sum(a for ts, a in DEPOSITS[ex] if t >= ts)
 HL_FROM = 1790960000                       # releves Hyperliquid fiables apres le correctif du 02/10 (valeur sans double comptage) ; avant, la page garde son historique
 LABEL = {("upbit", "spot_krw"): "Upbit KRW", ("bithumb", "spot_krw"): "Bithumb KRW", ("coinbase", "spot"): "spot Coinbase",
          ("binance", "spot"): "spot Binance", ("robinhood", "spot"): "Robinhood"}
@@ -23,7 +29,7 @@ def equity(name):
 
 def series(eq):
     """{exch: [(ts, valeur)]} -> [[ts, pnl hl, pnl aster, total]] : dernier releve de chaque heure, valeur portee en avant ; Aster vaut 0 avant son premier releve."""
-    last = {ex: {t // 3600: (t, v - BASE[ex]) for t, v in rows} for ex, rows in eq.items()}
+    last = {ex: {t // 3600: (t, v - base(ex, t)) for t, v in rows} for ex, rows in eq.items()}
     out, cur = [], {ex: 0.0 for ex in eq}
     pts = sorted((t, ex, p) for ex, d in last.items() for t, p in d.values())
     for t, ex, p in pts:
@@ -171,7 +177,7 @@ def live_values(snap, state):
             a["value_pass"], a["est"] = a["value"], True
             a["value"] = est[ex] = round(a["value"] + sum(cur.values()) - sum(then.values()), 2)
     if est and snap["pnl"] and snap["ts"] > snap["pnl"][-1][0]:
-        v = {ex: snap["accounts"][ex]["value"] - BASE[ex] for ex in ("hl", "aster") if ex in snap["accounts"]}
+        v = {ex: snap["accounts"][ex]["value"] - base(ex, snap["ts"]) for ex in ("hl", "aster") if ex in snap["accounts"]}
         last = snap["pnl"][-1]
         row = [snap["ts"], round(v.get("hl", last[1]), 2), round(v.get("aster", last[2]), 2)]
         snap["pnl"].append(row + [round(row[1] + row[2], 2)])
@@ -246,6 +252,9 @@ def _selftest():
     tw = [x | {"status": "ouvert", "r_size": "10", "r_px_in": "1", "exit_ts": "9000"} for x in sig]
     z2, _ = sizing(tw, {"hl": [(1, 149.0)], "aster": [(1, 153.53)]}, {})
     assert z2["e-aster"]["w"] == z2["e"]["w"] == 0.5                                                  # position jumelle : w de la principale
+    DEPOSITS["aster"].append((5000, 100.0))                                                          # un depot ne compte qu'a partir de son arrivee
+    assert series({"hl": [], "aster": [(3600, 153.53), (7300, 253.53)]}) == [[3600, 0.0, 1.0, 1.0], [7300, 0.0, 1.0, 1.0]]
+    DEPOSITS["aster"].pop()
     print("self-check ok")
 
 
