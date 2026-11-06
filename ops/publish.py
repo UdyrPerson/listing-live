@@ -10,7 +10,7 @@ import listing_live as ll
 BASE = {"hl": 150.0, "aster": 152.53}      # apports nets de depart : Hyperliquid 150 $ ; Aster 150 USDC + ~2,5 $ d'ETH (premier releve reel)
 # un depot (+), un retrait (-) ou un transfert entre comptes s'ajoute ici, jamais a BASE (qui fausserait tout l'historique) :
 # (ts du premier releve de equity*.csv qui l'inclut, montant recu)
-DEPOSITS = {"hl": [], "aster": []}
+DEPOSITS = {"hl": [], "aster": [(1793957823, 124.95)]}   # 2026-11-06 : 125 $ de marge ajoutes sur Aster ; 124,95 $ = saut du releve de 09:37 UTC, sans position ouverte
 
 
 def base(ex, t):
