@@ -52,3 +52,4 @@ binance-PREDICT-1793274532,1793274532,binance,PREDICT,,,ineligible,pas de perp s
 upbit-CARDS-1793858583,1793858583,upbit,CARDS,aster,CARDSUSDT,signal,,1793988600,1794420600,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,0.17151,,hors test : pas de perp Binance (suivi fictif seulement),,
 bithumb-MAGMA-1793861453,1793861453,bithumb,MAGMA,aster,MAGMAUSDT,signal,,1793991600,1794423600,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,0.07822,,,,
 bithumb-MAGMA-1793861440,1793861440,bithumb,MAGMA,aster,MAGMAUSDT,ineligible,deja un signal ou une position sur ce coin,1793991600,1794423600,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,,,,,
+coinbase-CARD-1793984402,1793984402,coinbase,CARD,,,ineligible,pas de perp sur Hyperliquid ni sur Aster,1794114600,1794546600,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot,,,,,
