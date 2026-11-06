@@ -1,2 +1,0 @@
-ENTREE FICTIVE short aster:CARDSUSDT a 0.23845219772939177 (spread 128.7 pb, glissement 1 k$ 103.66 pb, 5 k$ 370.53 pb)
-ENTREE ASTER ECARTEE CARDSUSDT : hors test : pas de perp Binance (suivi fictif seulement) : pas d'ordre reel
