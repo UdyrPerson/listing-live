@@ -1,0 +1,2 @@
+ENTREE FICTIVE short aster:MAGMAUSDT a 0.27228 (spread 8.8 pb, glissement 1 k$ 4.41 pb, 5 k$ 11.82 pb)
+ENTREE REEL short 585.0 MAGMAUSDT a 0.272184 (159 $) ; stop 447003211 ; couverture 159 $ [('BNBUSDT', 0.06), ('ETHUSDT', 0.018), ('SOLUSDT', 0.43), ('DOGEUSDT', 529.0)] ; part de la repartition 159 $ ; taille 159 $ (compte 319 $, w = min(1, 8% / vol 7.8%)), marge deja bloquee 0 $, short deja ouvert 0 $ (limite : taille cible)
