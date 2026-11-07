@@ -61,7 +61,6 @@ MAX_MARGIN, MIN_LEG = 0.7, {"hl": 11, "aster": 6}   # marge initiale du compte <
 MAX_SHORT = 1.0                                # short total <= 1 x le capital : au-dela de ~1,25 x, un squeeze commun de +50 % liquiderait le compte AVANT les stops
 SPRT_DRIFT, SPRT_BOUND, SPRT_NMAX = 0.00828, 1.337, 264    # Wald H0 0 / H1 238 pb sur le resultat couvert PONDERE par la taille (w = min(1, VOL_REF / vol)),
                                                # sigma pondere 1 004 pb, erreurs 10 % / 10 % ; simule : arret a tort 12 % si 238 pb, validation a tort 11 % si 0, ~108 trades
-BALANCE_ALERT = 0.6                            # alerte quotidienne si un compte porte plus de 60 % du capital total : transfert manuel (les cles ne retirent rien)
 V11_FROM = 1791277200                          # 2026-10-06 09:00 UTC : la v1.1 (couverture, test) repart de zero (research/listing-strategy-v1.md)
 STOPS_MAX, FUND_MIN, FLOOR_USD = (5, 30), -0.02, 100.0     # arrets durs : >= 5 stops sur les 30 derniers trades, funding moyen < -200 pb sur 20, compte < 100 $
 MAX_NEW_MARKETS = 8                # plus de 8 marches neufs d'un coup = etat perdu, pas 8 listings : on reamorce sans emettre
@@ -1035,9 +1034,6 @@ def main():
         days = getattr(b, "days_left", None)
         if days is not None and days < KEY_WARN_DAYS and time.gmtime(now).tm_hour == 0:     # une fois par jour : sans cle valide, plus d'entree NI de sortie
             alerts.append(f"LA CLE D'AGENT {ex.upper()} EXPIRE DANS {days:.0f} JOURS : a renouveler (secrets de la tache)")
-    if len(values) == 2 and time.gmtime(now).tm_hour == 0 and max(values.values()) / sum(values.values()) > BALANCE_ALERT:
-        alerts.append("COLLATERAL DESEQUILIBRE : " + ", ".join(f"{ex} {v:.0f} $" for ex, v in values.items()) +
-                      f" (plus de {BALANCE_ALERT:.0%} sur un compte) -> transfert manuel conseille, les cles du pilote ne peuvent rien retirer")
     if time.gmtime(now).tm_min < 15:                                            # une fois par heure (passages a :07)
         try:
             robinhood_shadow(now, alerts)
