@@ -1,0 +1,2 @@
+SORTIE FICTIVE (clos) aster:MAGMAUSDT : short +178 pb, couverture -517 pb, total -339 pb | test sequentiel (v1.1, pondere) : n 14, S +0.699, bornes [-1.22 ; +1.45] -> en cours
+SORTIE REEL MAGMAUSDT : -5.68 $ (-357 pb du notionnel)
