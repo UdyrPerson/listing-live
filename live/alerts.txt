@@ -1,0 +1,4 @@
+ENTREE FICTIVE short hl:HYPE a 73.84096731667184 (spread 0.3 pb, glissement 1 k$ 0.14 pb, 5 k$ 0.32 pb)
+ENTREE FICTIVE short aster:HYPEUSDT (jumelle) a 73.943 (spread 4.3 pb, glissement 1 k$ 2.16 pb, 5 k$ 2.16 pb)
+ENTREE REEL short 2.02 HYPE a 73.892 (149 $) ; stop 601916447492 ; couverture 149 $ [('BNB', 0.054), ('ETH', 0.018), ('SOL', 0.44), ('DOGE', 543.0)] ; part de la repartition 149 $ ; taille 149 $ (compte 181 $, w = min(1, 8% / vol 3.5%)), marge deja bloquee 0 $, short deja ouvert 0 $ (limite : taille cible)
+ENTREE REEL short 1.32 HYPEUSDT a 73.959 (98 $) ; stop 2670622202 ; couverture 98 $ [('BNBUSDT', 0.04), ('ETHUSDT', 0.011), ('SOLUSDT', 0.28), ('DOGEUSDT', 341.0)] ; part de la repartition 98 $ ; taille 98 $ (compte 312 $, w = min(1, 8% / vol 3.5%)), marge deja bloquee 68 $, short deja ouvert 158 $ (limite : taille cible)
