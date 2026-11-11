@@ -68,6 +68,8 @@ KEY_WARN_DAYS = 14
 POP_OUT, POP_CHECK = "hors test : pas de perp Binance (suivi fictif seulement)", "a verifier : perp Binance"
 ERRATUM = {"upbit-CASHCAT-1790573232": POP_OUT, "bithumb-POD-1791273129": POP_OUT, "bithumb-CASHCAT-1791425763": POP_OUT, "bithumb-XDP-1791541897": POP_OUT,
            "bithumb-CTR-1791435182": "hors test : non-evenement (KRW-CTR cote depuis le 2026-06-09)"}    # research/listing-erratum-2026-10-12.md
+PERP_OLD = "perp Binance deja cote : pas un listing de perp (spec 18, erratum du 2026-11-11)"   # spec 18 = PREMIER perp Binance du coin
+PERP_ERRATUM = {"binance-perp-HYPE-1794373231", "binance-perp-TRX-1794373231"}                # HYPEUSDC, TRXUSDC : vus avant le correctif
 OPEN_CHECK = ("upbit", "bithumb", "coinbase", "binance")        # lieux dont le marche annonce se lit en public (Robinhood : non)
 SILENCE_D = {"bithumb": 14, "upbit": 16, "coinbase": 28, "robinhood": 75, "binance": 90}   # p99 des ecarts entre annonces, 2025-2026 (jours)
 MUTE_H = (12, 48)                  # heures sans aucun message d'un fil qui declenchent une alerte
@@ -743,7 +745,9 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
         why = ERRATUM.get(j["id"]) or ERRATUM.get(j["twin"])
         if why and not j["pop"]:
             j["pop"] = why
-    busy = {(fam(j), j["ticker"]) for j in journal if j["status"] in ("signal", "ouvert")}
+        if j["id"] in PERP_ERRATUM and j["status"] == "signal":
+            j |= {"status": "ineligible", "note": PERP_OLD}
+    busy ={(fam(j), j["ticker"]) for j in journal if j["status"] in ("signal", "ouvert")}
     for a in [] if exits_only else new_ann:                         # 1. nouvelles annonces -> signal ou ineligible
         t, tick, perp = int(a["ts"]), a["ticker"].upper(), a.get("market") == "perp"
         coin = hl_coin(tick, ctx)
@@ -765,6 +769,8 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
                 j["vol3d"] = round(vol3d(cs, t) or 0.0, 5) or ""
             except Exception as e:                                  # reseau : le signal est garde, l'eligibilite sera verifiee a l'entree
                 ok, why = True, f"eligibilite a verifier a l'entree ({type(e).__name__})"
+            if ok and perp and binance_perp(tick, t):               # perp d'un coin deja cote sur Binance (ex. USDC-M) : pas un listing de perp
+                ok, why = False, PERP_OLD
             j |= {"status": "signal" if ok else "ineligible", "note": why}
             j["note"] = why or ("listing de perp : suivi fictif seulement (spec 18)" if perp else "")
             if ok and not perp:                                     # population du backtest : perp Binance (erratum v1.1, regle 1)
@@ -1205,7 +1211,13 @@ def _selftest():
     assert jo[0]["status"] == "signal" and jo[0]["pop"] == POP_OUT
     step(int(jo[0]["entry_ts"]), jo, [], [], ctx2, {}, bo)
     assert jo[0]["status"] == "ouvert" and jo[0]["r_size"] == "" and bo.sent == [] and "pas d'ordre reel" in jo[0]["r_note"]
+    jp = []                                                                                       # listing de perp : premier perp Binance du coin seulement
+    step(t + 60, jp, [{"ts": t - DELAY_S, "venue": "binance", "market": "perp", "ticker": "SUI"}], [], ctx2, {}, bo)
+    assert jp[0]["status"] == "signal" and "spec 18" in jp[0]["note"]
     binance_perp = lambda tick, t: True
+    jp2 = [dict(jp[0]) | {"id": "binance-perp-HYPE-1794373231"}]                                  # signal d'avant le correctif, puis perp d'un coin deja cote
+    step(t + 60, jp2, [{"ts": t - DELAY_S, "venue": "binance", "market": "perp", "ticker": "SUI"}], [], ctx2, {}, Fake(live=True))
+    assert [x["status"] for x in jp2] == ["ineligible", "ineligible"] and jp2[0]["note"] == jp2[1]["note"] == PERP_OLD
     venue_open = lambda venue, tick, t_ann, now: t_ann - 4 * 86400                                # marche deja cote : non-evenement, rien n'entre
     jk = []
     step(t + 60, jk, [{"ts": t - DELAY_S, "venue": "bithumb", "market": "spot_krw", "ticker": "SUI"}], [], ctx2, {}, Fake(live=True))
