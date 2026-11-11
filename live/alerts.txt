@@ -1,1 +1,0 @@
-SORTIE FICTIVE (clos) aster:CARDSUSDT : short +1376 pb, couverture -452 pb, total +924 pb | test sequentiel (v1.1, pondere) : n 13, S +0.733, bornes [-1.23 ; +1.44] -> en cours
