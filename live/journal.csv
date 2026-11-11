@@ -57,5 +57,5 @@ upbit-HYPE-1794286200,1794286200,upbit,HYPE,hl,HYPE,signal,,1794416100,179484810
 upbit-HYPE-1794286200-aster,1794286200,upbit,HYPE,aster,HYPEUSDT,signal,,1794416100,1794848100,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,0.0348,upbit-HYPE-1794286200,,,
 bithumb-CARDS-1794287633,1794287633,bithumb,CARDS,aster,CARDSUSDT,ineligible,deja un signal ou une position sur ce coin,1794417600,1794849600,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,,,,,
 bithumb-HYPE-1794287633,1794287633,bithumb,HYPE,hl,HYPE,ineligible,deja un signal ou une position sur ce coin,1794417600,1794849600,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,,,,,
-binance-perp-HYPE-1794373231,1794373231,binance,HYPE,hl,HYPE,signal,listing de perp : suivi fictif seulement (spec 18),1794503400,1794935400,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,perp,0.04123,,,,
-binance-perp-TRX-1794373231,1794373231,binance,TRX,hl,TRX,signal,listing de perp : suivi fictif seulement (spec 18),1794503400,1794935400,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,perp,0.00631,,,,
+binance-perp-HYPE-1794373231,1794373231,binance,HYPE,hl,HYPE,ineligible,"perp Binance deja cote : pas un listing de perp (spec 18, erratum du 2026-11-11)",1794503400,1794935400,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,perp,0.04123,,,,
+binance-perp-TRX-1794373231,1794373231,binance,TRX,hl,TRX,ineligible,"perp Binance deja cote : pas un listing de perp (spec 18, erratum du 2026-11-11)",1794503400,1794935400,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,perp,0.00631,,,,
