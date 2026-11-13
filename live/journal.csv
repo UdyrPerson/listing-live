@@ -59,3 +59,4 @@ bithumb-CARDS-1794287633,1794287633,bithumb,CARDS,aster,CARDSUSDT,ineligible,dej
 bithumb-HYPE-1794287633,1794287633,bithumb,HYPE,hl,HYPE,ineligible,deja un signal ou une position sur ce coin,1794417600,1794849600,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,,,,,
 binance-perp-HYPE-1794373231,1794373231,binance,HYPE,hl,HYPE,ineligible,"perp Binance deja cote : pas un listing de perp (spec 18, erratum du 2026-11-11)",1794503400,1794935400,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,perp,0.04123,,,,
 binance-perp-TRX-1794373231,1794373231,binance,TRX,hl,TRX,ineligible,"perp Binance deja cote : pas un listing de perp (spec 18, erratum du 2026-11-11)",1794503400,1794935400,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,perp,0.00631,,,,
+coinbase-PEARL-1794532202,1794532202,coinbase,PEARL,aster,PEARLUSDT,signal,,1794662400,1795094400,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot,0.12215,,hors test : pas de perp Binance (suivi fictif seulement),,
