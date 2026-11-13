@@ -1,0 +1,4 @@
+SORTIE REELLE ANTICIPEE hl:HYPE (la ligne fictive continue jusqu'a sa sortie)
+SORTIE REEL HYPE : -6.53 $ (-437 pb du notionnel)
+SORTIE REELLE ANTICIPEE aster:HYPEUSDT (la ligne fictive continue jusqu'a sa sortie)
+SORTIE REEL HYPEUSDT : -4.19 $ (-430 pb du notionnel)
