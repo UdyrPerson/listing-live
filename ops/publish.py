@@ -62,7 +62,8 @@ def sizing(journal, eq, px):
     for j in sorted((j for j in journal if j["status"] == "signal" and not j["twin"]), key=lambda j: int(j["entry_ts"])):
         t = int(j["entry_ts"])
         group = [x for x in [j] + [x for x in journal if x["twin"] == j["id"] and x["status"] == "signal"]
-                 if x["exch"] in E and x["market"] != "perp" and not x["pop"]]
+                 if x["exch"] in E and x["market"] != "perp" and ll.tradable(x) and x["ticker"] not in ll.TOP_FALLBACK]
+        # ponytail: top 10 de la liste fixe du 13/11, pas de CoinGecko chaque minute ; le direct lit le vrai classement a l'entree
         live = [(e, z) for e, z, out_ts in held if out_ts > t]
         acc = {x["exch"]: (E[x["exch"]], sum(z for e, z in live if e == x["exch"]), sum(z for e, z in live if e == x["exch"]) * mk, ll.MIN_LEG[x["exch"]])
                for x in group if sum(e == x["exch"] for e, _ in live) < ll.MAX_REAL}
@@ -88,7 +89,7 @@ def trade_rows(journal, px, sizes=None):
         x = {"id": j["id"], "coin": j["ticker"], "exch": j["exch"], "t_ann": int(float(j["t_ann"])), "twin": twin, "state": j["status"],
              "listing": LABEL.get((j["venue"], j["market"] or {"upbit": "spot_krw", "bithumb": "spot_krw"}.get(j["venue"], "spot")), j["venue"]),
              "test": not (twin or perp or j.get("pop") or j["id"] in ll.ERRATUM) and t0 >= ll.V11_FROM, "v": "v1.1" if t0 >= ll.V11_FROM else "v1",
-             "out": j.get("pop", "") or ("listing de perp : fictif seulement" if perp else ""), "entry_ts": int(j["entry_ts"] or 0), "exit_ts": int(j["exit_ts"] or 0)}
+             "out": j.get("pop", "").replace(" (suivi fictif seulement)", "") or ("listing de perp : fictif seulement" if perp else ""), "entry_ts": int(j["entry_ts"] or 0), "exit_ts": int(j["exit_ts"] or 0)}
         if j["t_in"]:
             x |= {"t_in": int(j["t_in"]), "px_in": float(j["px_in"] or j["r_px_in"] or 0)}
             if j["status"] == "ouvert" and j["coin"] in p and x["px_in"]:
@@ -108,7 +109,7 @@ def trade_rows(journal, px, sizes=None):
             x["real"] = r
         else:
             x["real"] = None
-            x["why"] = ("hors test" if j.get("pop") else "listing de perp" if perp else "pas de place" if ll.capacity_refused(j["r_note"]) else "")
+            x["why"] = ("top 10 : pas d'ordre reel" if "top 10 des capitalisations" in j["r_note"] else "hors test" if j.get("pop") else "listing de perp" if perp else "pas de place" if ll.capacity_refused(j["r_note"]) else "")
         if (sizes or {}).get(j["id"]):
             x["size"] = sizes[j["id"]]
         out.append(x)
@@ -252,6 +253,9 @@ def _selftest():
     tw = [x | {"status": "ouvert", "r_size": "10", "r_px_in": "1", "exit_ts": "9000"} for x in sig]
     z2, _ = sizing(tw, {"hl": [(1, 149.0)], "aster": [(1, 153.53)]}, {})
     assert z2["e-aster"]["w"] == z2["e"]["w"] == 0.5                                                  # position jumelle : w de la principale
+    z3, _ = sizing([x | {"pop": ll.POP_OUT} for x in sig] + [sig[0] | {"id": "f", "ticker": "HYPE"}], {"hl": [(1, 149.0)], "aster": [(1, 153.53)]}, {})
+    assert z3["e"]["plan"] > 0 and "f" not in z3                                                      # sans perp Binance : part prevue ; top 10 : aucune
+    assert trade_rows([rows[0] | {"pop": ll.POP_OUT}], {})[0]["out"] == "hors test : pas de perp Binance"
     DEPOSITS["aster"].append((5000, 100.0))                                                          # un depot ne compte qu'a partir de son arrivee
     assert series({"hl": [], "aster": [(3600, 153.53), (7300, 253.53)]}) == [[3600, 0.0, 1.0, 1.0], [7300, 0.0, 1.0, 1.0]]
     DEPOSITS["aster"].pop()
