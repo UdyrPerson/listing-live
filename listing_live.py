@@ -25,6 +25,7 @@ par ailleurs), beta 1. Pilote reel : short de F x capital x min(1, VOL_REF / vol
 """
 import calendar
 import csv
+import functools
 import json
 import math
 import pathlib
@@ -70,6 +71,13 @@ ERRATUM = {"upbit-CASHCAT-1790573232": POP_OUT, "bithumb-POD-1791273129": POP_OU
            "bithumb-CTR-1791435182": "hors test : non-evenement (KRW-CTR cote depuis le 2026-06-09)"}    # research/listing-erratum-2026-10-12.md
 PERP_OLD = "perp Binance deja cote : pas un listing de perp (spec 18, erratum du 2026-11-11)"   # spec 18 = PREMIER perp Binance du coin
 PERP_ERRATUM = {"binance-perp-HYPE-1794373231", "binance-perp-TRX-1794373231"}                # HYPEUSDC, TRXUSDC : vus avant le correctif
+TOP_N = 10                          # 2026-11-13, decision de l'utilisateur : pas d'ordre reel sur un coin du top 10 des capitalisations hors stablecoins
+TOP_FALLBACK = {"BTC", "ETH", "BNB", "XRP", "SOL", "TRX", "FIGR_HELOC", "HYPE", "ZEC", "DOGE"}   # releve CoinGecko du 2026-11-13, si l'API ne repond pas
+
+
+def tradable(j):
+    """Ordre reel permis : population du test, ou coin sans perp Binance (ligne reelle HORS test depuis le 2026-11-13, decision de l'utilisateur)."""
+    return j["pop"] in ("", POP_OUT)
 OPEN_CHECK = ("upbit", "bithumb", "coinbase", "binance")        # lieux dont le marche annonce se lit en public (Robinhood : non)
 SILENCE_D = {"bithumb": 14, "upbit": 16, "coinbase": 28, "robinhood": 75, "binance": 90}   # p99 des ecarts entre annonces, 2025-2026 (jours)
 MUTE_H = (12, 48)                  # heures sans aucun message d'un fil qui declenchent une alerte
@@ -342,6 +350,20 @@ def binance_perp(tick, t):
     return None if unknown else False
 
 
+@functools.lru_cache(maxsize=1)
+def top_caps():
+    """Tickers du top TOP_N des capitalisations CoinGecko hors categorie stablecoins (pas de filtre de prix : XRP vaut parfois ~1 $), lus une fois
+    par passage ; TOP_FALLBACK si CoinGecko ne repond pas ou limite le debit."""
+    q = "https://api.coingecko.com/api/v3/coins/markets"
+    try:
+        stable = {c["id"] for c in requests.get(q, params={"vs_currency": "usd", "category": "stablecoins", "per_page": 250}, timeout=30).json()}
+        top = requests.get(q, params={"vs_currency": "usd", "order": "market_cap_desc", "per_page": 50}, timeout=30).json()
+        out = [c["symbol"].upper() for c in top if c["id"] not in stable][:TOP_N]
+        return set(out) if len(out) == TOP_N else TOP_FALLBACK
+    except (requests.RequestException, ValueError, KeyError, TypeError):
+        return TOP_FALLBACK
+
+
 def venue_open(venue, tick, t_ann, now):
     """1re bougie horaire du marche annonce sur son lieu dans [t_ann - 48 h, now] -> heure (s), ou None si ce marche n'existe pas (encore). Une bougie
     des le debut de la fenetre = marche deja cote avant l'annonce. Leve une erreur si le lieu ne repond pas."""
@@ -571,6 +593,10 @@ def real_enter(j, snap, ctx, broker, journal, alerts, cands=None, target=None):
     mode, coin, ex = "reel" if broker.live else "simulation", j["coin"], j["exch"]
     if (LIVE / "STOP").exists():
         j["r_note"] = "arret d'urgence : pas d'entree"
+        return
+    if j["ticker"] in top_caps():                                   # grosse capitalisation : effet de listing attendu faible, taille maximale (w = 1)
+        j["r_note"] = f"top {TOP_N} des capitalisations hors stablecoins : pas d'ordre reel"
+        alerts.append(f"ENTREE {mode.upper()} ECARTEE {coin} : {j['r_note']}")
         return
     if sum(x["r_size"] != "" and x["r_net_usd"] == "" and x["exch"] == ex for x in journal if x is not j) >= MAX_REAL:
         j["r_note"] = f"deja {MAX_REAL} positions : pas d'entree"
@@ -876,10 +902,10 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
             if x["pop"] == POP_CHECK:                               # Binance ne repondait pas a l'annonce : nouvel essai avant tout ordre reel
                 bp = binance_perp(x["ticker"], int(x["t_ann"]))
                 x["pop"] = "" if bp else POP_OUT if bp is False else POP_CHECK
-            if x["pop"] and brokers.get(x["exch"]) and not fam(x):
+            if not tradable(x) and brokers.get(x["exch"]) and not fam(x):
                 x["r_note"] = f"{x['pop']} : pas d'ordre reel"
                 alerts.append(f"ENTREE {x['exch'].upper()} ECARTEE {x['coin']} : {x['r_note']}")
-        real = [(x, s, legs) for x, s, legs in entered if brokers.get(x["exch"]) and not fam(x) and not x["pop"]]   # perp listing ou hors population : fictif
+        real = [(x, s, legs) for x, s, legs in entered if brokers.get(x["exch"]) and not fam(x) and tradable(x)]   # perp listing ou non-evenement : fictif
         if not real:
             continue
         try:
@@ -955,7 +981,7 @@ def step(now, journal, new_ann, alerts, ctx, aster_syms=None, broker=None, actx=
         why = ("NOUVEL ESSAI D'ENTREE REELLE" if j["r_note"].startswith("entree en echec") and now <= int(j["entry_ts"]) + LATE_S          # AUTO_LATE_S apres
                else "ENTREE REELLE TARDIVE AUTOMATIQUE (place revenue)" if capacity_refused(j["r_note"]) and not held and now <= int(j["entry_ts"]) + AUTO_LATE_S
                else "ENTREE REELLE TARDIVE DEMANDEE (live/ENTER_LATE)" if j["id"] in late and now <= int(j["t_ann"]) + MAX_LATE_S else "")    # l'entree prevue
-        if not (why and b and j["status"] == "ouvert" and j["r_size"] == "" and not fam(j) and not j["pop"] and int(j["t_in"]) < now):    # (pas pour une jumelle
+        if not (why and b and j["status"] == "ouvert" and j["r_size"] == "" and not fam(j) and tradable(j) and int(j["t_in"]) < now):    # (pas pour une jumelle
             continue                                                # dont l'autre ligne tient deja le signal) ; ou demande manuelle. Sortie : celle du fictif
         try:
             s = book_snapshot(j["exch"], j["coin"])
@@ -1062,7 +1088,7 @@ def main():
 
 
 def _selftest():
-    global book_snapshot, candles, funding_sum, SAVE, binance_perp, venue_open, early_requests
+    global book_snapshot, candles, funding_sum, SAVE, binance_perp, venue_open, early_requests, top_caps
     assert schedule(1000000000) == (1000000000 + DELAY_S + 200 + 300, 1000000000 + DELAY_S + 500 + HOLD_S)         # 1e9 + 36 h n'est pas sur une bougie : arrondi au-dessus
     j0 = {c: "" for c in J_COLS} | {"id": "x", "ticker": "Z", "exch": "hl", "coin": "Z", "status": "signal", "entry_ts": 1000, "exit_ts": 1000 + HOLD_S, "t_ann": 0}
     assert j0["exit_ts"] - j0["entry_ts"] == HOLD_S
@@ -1109,6 +1135,7 @@ def _selftest():
     assert sprt_v11([closed(i, net=-0.5) | {"t_in": V11_FROM, "pop": POP_OUT} for i in range(9)])[2] == "en cours"           # hors population : hors test
     assert sprt_v11([closed(i, net=-0.5) | {"t_in": V11_FROM, "id": "bithumb-CTR-1791435182"} for i in range(9)])[2] == "en cours"   # erratum
     binance_perp, venue_open = (lambda tick, t: True), (lambda venue, tick, t_ann, now: t_ann + 3600)       # sans reseau
+    top_caps = lambda: set()
     journal, alerts = [], []                                                                      # machine a etats, sans reseau
     step(t, journal, [{"ts": t - 3600, "venue": "upbit", "ticker": "ZAMA"}], alerts, uni, {"XYZ": "XYZUSDT"})
     assert journal[0]["status"] == "ineligible" and "Aster" in journal[0]["note"]
@@ -1202,7 +1229,7 @@ def _selftest():
     step(t + 7260, [s6], [], [], ctx2, {}, b6)
     assert s6["status"] == "clos" and s6["px_out"] == 1.2 and s6["t_out"] == t + 5000 and s6["pop"] == "" and s6["r_px_out"] == 1.2 and "prix lu" in s6["r_note"]
     assert b6.cancels == 1 and b6.pos == {}                                                       # A : stop de l'entree annule, couverture vendue au meme passage
-    bo, one = Fake(live=True), candles                                                            # signal hors population : fictif seulement, aucun ordre
+    bo, one = Fake(live=True), candles                                                            # signal sans perp Binance : ordre reel, hors test
     candles = lambda exch, coin, a, b: [{"t": (b - 3 * 86400 + 300 * i) * 1000, "T": (b - 3 * 86400 + 300 * i + 300) * 1000, "o": "1", "h": "1.001",
                                          "c": "1.001" if i % 2 else "0.999"} for i in range(864)]     # perp preexistant : eligible
     binance_perp = lambda tick, t: False
@@ -1210,7 +1237,12 @@ def _selftest():
     step(t + 60, jo, [{"ts": t - DELAY_S, "venue": "binance", "market": "spot", "ticker": "SUI"}], [], ctx2, {}, bo)
     assert jo[0]["status"] == "signal" and jo[0]["pop"] == POP_OUT
     step(int(jo[0]["entry_ts"]), jo, [], [], ctx2, {}, bo)
-    assert jo[0]["status"] == "ouvert" and jo[0]["r_size"] == "" and bo.sent == [] and "pas d'ordre reel" in jo[0]["r_note"]
+    assert jo[0]["status"] == "ouvert" and jo[0]["r_size"] != "" and bo.sent and jo[0]["pop"] == POP_OUT   # hors test : v1_closed l'ecarte
+    top_caps, jt, bt = (lambda: {"SUI"}), [], Fake(live=True)                                     # top 10 des capitalisations : fictif seulement
+    step(t + 60, jt, [{"ts": t - DELAY_S, "venue": "binance", "market": "spot", "ticker": "SUI"}], [], ctx2, {}, bt)
+    step(int(jt[0]["entry_ts"]), jt, [], [], ctx2, {}, bt)
+    assert jt[0]["status"] == "ouvert" and jt[0]["r_size"] == "" and bt.sent == [] and "top 10" in jt[0]["r_note"]
+    top_caps = lambda: set()
     jp = []                                                                                       # listing de perp : premier perp Binance du coin seulement
     step(t + 60, jp, [{"ts": t - DELAY_S, "venue": "binance", "market": "perp", "ticker": "SUI"}], [], ctx2, {}, bo)
     assert jp[0]["status"] == "signal" and "spec 18" in jp[0]["note"]
