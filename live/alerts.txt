@@ -1,2 +1,0 @@
-ENTREE FICTIVE short aster:PEARLUSDT a 1.4486132651782389 (spread 78.0 pb, glissement 1 k$ 340.97 pb, 5 k$  pb)
-ENTREE REEL short 31.3 PEARLUSDT a 1.4880633 (47 $) ; stop 2378784 ; couverture 47 $ [('BNBUSDT', 0.02), ('ETHUSDT', 0.006), ('SOLUSDT', 0.15), ('DOGEUSDT', 188.0)] ; part de la repartition 101 $ ; taille 101 $ (compte 308 $, w = min(1, 8% / vol 12.2%)), marge deja bloquee 0 $, short deja ouvert 0 $ (limite : taille cible)
