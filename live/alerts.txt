@@ -1,2 +1,0 @@
-ENTREE FICTIVE short aster:DNAUSDT a 0.15678110543584362 (spread 14.6 pb, glissement 1 k$ 40.27 pb, 5 k$ 54.66 pb)
-ENTREE REEL short 670.6 DNAUSDT a 0.157012 (105 $) ; stop 11111593 ; couverture 105 $ [('BNBUSDT', 0.04), ('ETHUSDT', 0.015), ('SOLUSDT', 0.38), ('DOGEUSDT', 459.0)] ; part de la repartition 105 $ ; taille 105 $ (compte 309 $, w = min(1, 8% / vol 11.7%)), marge deja bloquee 19 $, short deja ouvert 43 $ (limite : taille cible)
