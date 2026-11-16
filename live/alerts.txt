@@ -1,2 +1,0 @@
-SORTIE FICTIVE (clos) hl:HYPE : short +914 pb, couverture -1364 pb, total -451 pb | test sequentiel (v1.1, pondere) : n 15, S +0.654, bornes [-1.21 ; +1.46] -> en cours
-SORTIE FICTIVE (clos) aster:HYPEUSDT : short +932 pb, couverture -1364 pb, total -432 pb | test sequentiel (v1.1, pondere) : n 15, S +0.654, bornes [-1.21 ; +1.46] -> en cours
