@@ -1,0 +1,2 @@
+SORTIE FICTIVE (stoppe) aster:PEARLUSDT : short -5166 pb, couverture -512 pb, total -5678 pb | test sequentiel (v1.1, pondere) : n 15, S +0.654, bornes [-1.21 ; +1.46] -> en cours
+SORTIE REEL PEARLUSDT : -25.83 $ (-5547 pb du notionnel)
