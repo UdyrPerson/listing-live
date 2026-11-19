@@ -1,0 +1,2 @@
+SORTIE FICTIVE (clos) aster:DNAUSDT : short +69 pb, couverture -74 pb, total -5 pb | test sequentiel (v1.1, pondere) : n 15, S +0.654, bornes [-1.21 ; +1.46] -> en cours
+SORTIE REEL DNAUSDT : +0.31 $ (+29 pb du notionnel)
