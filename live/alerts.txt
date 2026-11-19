@@ -1,0 +1,1 @@
+COURTIER ASTER INDISPONIBLE (RuntimeError) : suivi fictif seul sur cet exchange
