@@ -1,2 +1,1 @@
-SOURCE EN PANNE depuis 6 passages : marches bithumb
 ECART ENTRE LE JOURNAL ET LE COMPTE ASTER sur ['AAVEUSDT', 'ANTUSDT', 'ARBUSDT', 'ENAUSDT', 'HYPEUSDT', 'UNIUSDT', 'USELESSUSDT', 'VVVUSDT', 'WLDUSDT'] : a verifier a la main
