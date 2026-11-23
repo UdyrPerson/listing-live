@@ -1,2 +1,1 @@
 ECART ENTRE LE JOURNAL ET LE COMPTE ASTER sur ['ARBUSDT', 'ENAUSDT', 'HYPEUSDT', 'USELESSUSDT', 'VVVUSDT', 'WLDUSDT'] : a verifier a la main
-ANNONCE ASTER : [Delisting Postponement Notice] POD and 8 Other Perpetual Contracts - 2026-11-24 09:00 UTC
