@@ -1,1 +1,1 @@
-ARRET DUR DECLENCHE : compte aster a 0.04 $, sous le plancher de 100 $ -> plus aucune entree reelle (les sorties continuent) ; supprimer live/STOP pour reprendre
+SELF-CHECK EN ECHEC : passage annule, aucun ordre (voir journalctl -u listing-live)
