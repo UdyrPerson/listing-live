@@ -68,3 +68,6 @@ upbit-ACU-1795488207,1795488207,upbit,ACU,aster,ACUUSDT,signal,,1795618200,17960
 upbit-DBR-1795488207,1795488207,upbit,DBR,,,ineligible,pas de perp sur Hyperliquid ni sur Aster,1795618200,1796050200,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,,,,,
 upbit-ON-1795488207,1795488207,upbit,ON,aster,ONUSDT,signal,,1795618200,1796050200,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,0.15579,,,,
 upbit-RPL-1795488207,1795488207,upbit,RPL,aster,RPLUSDT,signal,,1795618200,1796050200,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,0.02049,,,,
+bithumb-ON-1795491935,1795491935,bithumb,ON,aster,ONUSDT,ineligible,deja un signal ou une position sur ce coin,1795622100,1796054100,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,,,,,
+bithumb-SANC-1795491935,1795491935,bithumb,SANC,,,ineligible,pas de perp sur Hyperliquid ni sur Aster,1795622100,1796054100,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,,,,,
+bithumb-SQD-1795491935,1795491935,bithumb,SQD,aster,SQDUSDT,signal,,1795622100,1796054100,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,spot_krw,0.0354,,,,

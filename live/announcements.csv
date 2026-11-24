@@ -52,3 +52,6 @@ ts,venue,market,ticker,n_tickers,head,source
 1795488207,upbit,spot_krw,DBR,4,【Upbit 将上线 RPL、ACU、DBR 和 ON 韩元、BTC 及 USDT 交易对】,ForesightNews
 1795488207,upbit,spot_krw,ON,4,【Upbit 将上线 RPL、ACU、DBR 和 ON 韩元、BTC 及 USDT 交易对】,ForesightNews
 1795488207,upbit,spot_krw,RPL,4,【Upbit 将上线 RPL、ACU、DBR 和 ON 韩元、BTC 及 USDT 交易对】,ForesightNews
+1795491935,bithumb,spot_krw,ON,3,"오로치네트워크(ON), 생텀(SANC), 서브스퀴드(SQD) 원화 마켓 추가",bithumb_api
+1795491935,bithumb,spot_krw,SANC,3,"오로치네트워크(ON), 생텀(SANC), 서브스퀴드(SQD) 원화 마켓 추가",bithumb_api
+1795491935,bithumb,spot_krw,SQD,3,"오로치네트워크(ON), 생텀(SANC), 서브스퀴드(SQD) 원화 마켓 추가",bithumb_api

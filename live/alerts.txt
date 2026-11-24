@@ -1,1 +1,4 @@
+ANNONCE bithumb ON -> ineligible deja un signal ou une position sur ce coin
+ANNONCE bithumb SANC -> ineligible pas de perp sur Hyperliquid ni sur Aster
+ANNONCE bithumb SQD -> signal  | entree prevue 2026-11-25 15:55 UTC sur aster:SQDUSDT
 ECART ENTRE LE JOURNAL ET LE COMPTE ASTER sur ['ENAUSDT', 'HYPEUSDT', 'PENGUUSDT', 'UNIUSDT', 'WLDUSDT'] : a verifier a la main
