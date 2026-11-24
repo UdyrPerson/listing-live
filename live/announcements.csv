@@ -48,3 +48,7 @@ ts,venue,market,ticker,n_tickers,head,source
 1794536700,upbit,spot_krw,SANC,1,"생텀(SANC) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",upbit_api
 1794545202,bithumb,spot_krw,DNA,1,네오소울(DNA) 원화 마켓 추가,bithumb_api
 1795057139,bithumb,spot_krw,KNTQ,1,키네틱(KNTQ) 원화 마켓 추가,bithumb_api
+1795488207,upbit,spot_krw,ACU,4,【Upbit 将上线 RPL、ACU、DBR 和 ON 韩元、BTC 及 USDT 交易对】,ForesightNews
+1795488207,upbit,spot_krw,DBR,4,【Upbit 将上线 RPL、ACU、DBR 和 ON 韩元、BTC 及 USDT 交易对】,ForesightNews
+1795488207,upbit,spot_krw,ON,4,【Upbit 将上线 RPL、ACU、DBR 和 ON 韩元、BTC 及 USDT 交易对】,ForesightNews
+1795488207,upbit,spot_krw,RPL,4,【Upbit 将上线 RPL、ACU、DBR 和 ON 韩元、BTC 及 USDT 交易对】,ForesightNews

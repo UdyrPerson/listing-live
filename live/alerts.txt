@@ -1,1 +1,5 @@
+ANNONCE upbit ACU -> signal  | entree prevue 2026-11-25 14:50 UTC sur aster:ACUUSDT
+ANNONCE upbit DBR -> ineligible pas de perp sur Hyperliquid ni sur Aster
+ANNONCE upbit ON -> signal  | entree prevue 2026-11-25 14:50 UTC sur aster:ONUSDT
+ANNONCE upbit RPL -> signal  | entree prevue 2026-11-25 14:50 UTC sur aster:RPLUSDT
 ECART ENTRE LE JOURNAL ET LE COMPTE ASTER sur ['ENAUSDT', 'HYPEUSDT', 'PENGUUSDT', 'UNIUSDT', 'WLDUSDT'] : a verifier a la main
